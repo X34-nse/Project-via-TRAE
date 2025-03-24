@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Security Assessment System</title>
+    <link href="node_modules/bootstrap/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .sidebar {
+            min-height: 100vh;
+            background-color: #f8f9fa;
+        }
+        .main-content {
+            padding: 20px;
+        }
+        .card {
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="row">
+            <nav class="col-md-3 col-lg-2 d-md-block sidebar">
+                <div class="position-sticky pt-3">
+                    <ul class="nav flex-column">
+                        <li class="nav-item">
+                            <a class="nav-link active" href="#" data-section="dashboard">
+                                Dashboard
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#" data-section="companies">
+                                Companies
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#" data-section="assessments">
+                                Assessments
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+            </nav>
+
+            <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4 main-content">
+                <div id="dashboard-section" class="section active">
+                    <h2>Dashboard</h2>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-body">
+                                    <h5 class="card-title">Risk Assessment Overview</h5>
+                                    <canvas id="riskChart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-body">
+                                    <h5 class="card-title">Recent Assessments</h5>
+                                    <div id="recentAssessments"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="companies-section" class="section d-none">
+                    <h2>Companies</h2>
+                    <button class="btn btn-primary mb-3" id="addCompanyBtn">Add Company</button>
+                    <div id="companiesList"></div>
+
+                    <!-- Add Company Modal -->
+                    <div class="modal fade" id="addCompanyModal" tabindex="-1">
+                        <div class="modal-dialog">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <h5 class="modal-title">Add New Company</h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <form id="addCompanyForm">
+                                        <div class="mb-3">
+                                            <label class="form-label">Company Name</label>
+                                            <input type="text" class="form-control" name="name" required>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label class="form-label">Industry</label>
+                                            <input type="text" class="form-control" name="industry">
+                                        </div>
+                                        <div class="mb-3">
+                                            <label class="form-label">Company Size</label>
+                                            <select class="form-select" name="size">
+                                                <option value="small">Small (1-50 employees)</option>
+                                                <option value="medium">Medium (51-250 employees)</option>
+                                                <option value="large">Large (250+ employees)</option>
+                                            </select>
+                                        </div>
+                                    </form>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                                    <button type="button" class="btn btn-primary" id="saveCompanyBtn">Save Company</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="assessments-section" class="section d-none">
+                    <h2>Security Assessments</h2>
+                    <button class="btn btn-primary mb-3" id="startAssessmentBtn">Start New Assessment</button>
+                    <div id="assessmentsList"></div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <script src="node_modules/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="node_modules/chart.js/dist/chart.umd.js"></script>
+    <script src="renderer.js"></script>
+</body>
+</html>
