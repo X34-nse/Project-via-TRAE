@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Beveiligingsbeoordelingssysteem</title>
     <link href="node_modules/bootstrap/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
     <style>
         .sidebar {
             min-height: 100vh;
@@ -87,7 +88,32 @@
                                         </div>
                                         <div class="mb-3">
                                             <label class="form-label">Industrie</label>
-                                            <input type="text" class="form-control" name="industry">
+                                            <select class="form-control industry-select" name="industry">
+                                                <option value="">Selecteer een industrie</option>
+                                                <option value="Accountancy">Accountancy</option>
+                                                <option value="Advocatuur">Advocatuur</option>
+                                                <option value="Agrarisch">Agrarisch</option>
+                                                <option value="Automotive">Automotive</option>
+                                                <option value="Bouw">Bouw</option>
+                                                <option value="Detailhandel">Detailhandel</option>
+                                                <option value="Energie">Energie</option>
+                                                <option value="Financiële dienstverlening">Financiële dienstverlening</option>
+                                                <option value="Horeca">Horeca</option>
+                                                <option value="ICT">ICT</option>
+                                                <option value="Industrie">Industrie</option>
+                                                <option value="Logistiek">Logistiek</option>
+                                                <option value="Media">Media</option>
+                                                <option value="Onderwijs">Onderwijs</option>
+                                                <option value="Overheid">Overheid</option>
+                                                <option value="Retail">Retail</option>
+                                                <option value="Sport">Sport</option>
+                                                <option value="Techniek">Techniek</option>
+                                                <option value="Telecom">Telecom</option>
+                                                <option value="Transport">Transport</option>
+                                                <option value="Vastgoed">Vastgoed</option>
+                                                <option value="Verzekeringen">Verzekeringen</option>
+                                                <option value="Zorg">Zorg</option>
+                                            </select>
                                         </div>
                                         <div class="mb-3">
                                             <label class="form-label">Bedrijfsgrootte</label>
@@ -119,6 +145,8 @@
 
     <script src="node_modules/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
     <script src="node_modules/chart.js/dist/chart.umd.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
     <script src="renderer.js"></script>
 </body>
 </html>

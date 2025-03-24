@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
+const { exec } = require('child_process');
 
 let mainWindow;
 
@@ -176,6 +177,263 @@ ipcMain.handle('save-response', async (event, responseData) => {
     db.run(sql, [responseData.assessment_id, responseData.question_id, responseData.response, responseData.notes], function(err) {
       if (err) reject(err);
       resolve(this.lastID);
+    });
+  });
+});
+
+// System scan handlers
+ipcMain.handle('check-antivirus', async () => {
+  return new Promise((resolve, reject) => {
+    const command = 'Get-MpComputerStatus | Select-Object -Property AMServiceEnabled,AntispywareEnabled,AntivirusEnabled,RealTimeProtectionEnabled | ConvertTo-Json';
+    exec('powershell.exe -Command "' + command + '"', (error, stdout, stderr) => {
+      if (error) {
+        console.error('Antivirus check error:', error);
+        resolve({ error: 'Could not check antivirus status', details: error.message });
+        return;
+      }
+      try {
+        const status = JSON.parse(stdout);
+        resolve(status);
+      } catch (e) {
+        resolve({ error: 'Invalid antivirus status data', details: e.message });
+      }
+    });
+  });
+});
+
+ipcMain.handle('check-updates', async () => {
+  return new Promise((resolve, reject) => {
+    const command = 'Get-HotFix | Sort-Object -Property InstalledOn -Descending | Select-Object -First 5 | ConvertTo-Json';
+    exec('powershell.exe -Command "' + command + '"', (error, stdout, stderr) => {
+      if (error) {
+        console.error('Windows updates check error:', error);
+        resolve({ error: 'Could not check Windows updates', details: error.message });
+        return;
+      }
+      try {
+        const updates = JSON.parse(stdout);
+        resolve(updates);
+      } catch (e) {
+        resolve({ error: 'Invalid Windows updates data', details: e.message });
+      }
+    });
+  });
+});
+
+ipcMain.handle('check-firewall', async () => {
+  return new Promise((resolve, reject) => {
+    const command = 'Get-NetFirewallProfile | Select-Object Name,Enabled | ConvertTo-Json';
+    exec('powershell.exe -Command "' + command + '"', (error, stdout, stderr) => {
+      if (error) {
+        console.error('Firewall check error:', error);
+        resolve({ error: 'Could not check firewall status', details: error.message });
+        return;
+      }
+      try {
+        const firewallStatus = JSON.parse(stdout);
+        resolve(firewallStatus);
+      } catch (e) {
+        resolve({ error: 'Invalid firewall status data', details: e.message });
+      }
+    });
+  });
+});
+
+ipcMain.handle('check-backup-status', async () => {
+  return new Promise((resolve) => {
+    const timeout = 15000; // Reduced timeout to 15 seconds
+    const results = {};
+    let completedChecks = 0;
+    let timedOut = false;
+
+    // Simplified backup checks focusing on available Windows features
+    const commands = [
+      // Check disk volumes and free space
+      'Get-CimInstance -ClassName Win32_Volume -ErrorAction SilentlyContinue | Where-Object { $_.SystemVolume -eq $false } | Select-Object -Property DriveLetter,Capacity,FreeSpace | ConvertTo-Json',
+      // Check basic system protection settings
+      'Get-ComputerRestorePoint -ErrorAction SilentlyContinue | Select-Object -Last 1 -Property CreationTime,Description | ConvertTo-Json',
+      // Check basic file history status
+      'Get-CimInstance -ClassName Win32_Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*FileHistory*" } | Select-Object Name | ConvertTo-Json'
+    ];
+
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      resolve({
+        status: 'completed',
+        warning: 'Sommige back-up controles konden niet worden uitgevoerd',
+        data: results,
+        timestamp: new Date().toISOString()
+      });
+    }, timeout);
+
+    commands.forEach((command, index) => {
+      exec('powershell.exe -Command "' + command + '"', { timeout: timeout }, (error, stdout, stderr) => {
+        if (timedOut) return;
+        completedChecks++;
+
+        if (!error && stdout && stdout.trim()) {
+          try {
+            const data = JSON.parse(stdout);
+            switch(index) {
+              case 0:
+                results.volumes = data;
+                break;
+              case 1:
+                results.systemRestore = data;
+                break;
+              case 2:
+                results.fileHistory = data;
+                break;
+            }
+          } catch (e) {
+            results[`warning_${index}`] = { type: 'parse_error', message: 'Kon gegevens niet verwerken' };
+          }
+        } else {
+          results[`warning_${index}`] = { 
+            type: 'feature_unavailable', 
+            message: 'Deze Windows-functie is niet beschikbaar of vereist extra rechten'
+          };
+        }
+
+        if (completedChecks === commands.length) {
+          clearTimeout(timeoutId);
+          resolve({
+            status: Object.keys(results).some(k => k.startsWith('error_')) ? 'partial' : 'completed',
+            data: results,
+            timestamp: new Date().toISOString()
+          });
+        }
+      });
+    });
+  });
+});
+
+ipcMain.handle('check-encryption-status', async () => {
+  return new Promise((resolve) => {
+    const timeout = 10000; // Reduced timeout to 10 seconds
+    let timedOut = false;
+
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      resolve({
+        status: 'completed',
+        warning: 'Encryptie status kon niet worden gecontroleerd',
+        data: {
+          available: false,
+          reason: 'timeout'
+        },
+        timestamp: new Date().toISOString()
+      });
+    }, timeout);
+
+    // Simplified BitLocker check
+    const command = 'Get-CimInstance -ClassName Win32_EncryptableVolume -ErrorAction SilentlyContinue | Select-Object -Property DriveLetter,EncryptionMethod,ProtectionStatus | ConvertTo-Json';
+    exec('powershell.exe -Command "' + command + '"', { timeout: timeout }, (error, stdout, stderr) => {
+      if (timedOut) return;
+      clearTimeout(timeoutId);
+
+      if (error || !stdout.trim()) {
+        resolve({
+          status: 'completed',
+          warning: 'Encryptie status kon niet worden gecontroleerd',
+          data: {
+            available: false,
+            reason: error ? 'error' : 'no_data'
+          },
+          timestamp: new Date().toISOString()
+        });
+        return;
+      }
+
+      try {
+        const encryptionStatus = JSON.parse(stdout);
+        resolve({
+          status: 'completed',
+          data: {
+            available: true,
+            volumes: encryptionStatus
+          },
+          timestamp: new Date().toISOString()
+        });
+      } catch (e) {
+        resolve({
+          status: 'completed',
+          warning: 'Encryptie status kon niet worden verwerkt',
+          data: {
+            available: false,
+            reason: 'parse_error'
+          },
+          timestamp: new Date().toISOString()
+        });
+      }
+    });
+  });
+
+  });
+});
+
+ipcMain.handle('check-network-security', async () => {
+  return new Promise((resolve) => {
+    const timeout = 10000; // Reduced timeout to 10 seconds
+    let timedOut = false;
+
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      resolve({
+        status: 'completed',
+        warning: 'Netwerk beveiliging kon niet worden gecontroleerd',
+        data: {
+          available: false,
+          reason: 'timeout'
+        },
+        timestamp: new Date().toISOString()
+      });
+    }, timeout);
+
+    // Simplified network security check
+    const command = 'Get-NetConnectionProfile -ErrorAction SilentlyContinue | Select-Object -Property NetworkCategory,IPv4Connectivity,IPv6Connectivity | ConvertTo-Json';
+    exec('powershell.exe -Command "' + command + '"', { timeout: timeout }, (error, stdout, stderr) => {
+      if (timedOut) return;
+      clearTimeout(timeoutId);
+
+      if (error || !stdout.trim()) {
+        resolve({
+          status: 'completed',
+          warning: 'Netwerk beveiliging kon niet worden gecontroleerd',
+          data: {
+            available: false,
+            reason: error ? 'error' : 'no_data'
+          },
+          timestamp: new Date().toISOString()
+        });
+        return;
+      }
+
+      try {
+        const networkStatus = JSON.parse(stdout);
+        resolve({
+          status: 'completed',
+          data: {
+            available: true,
+            profile: networkStatus
+          },
+          timestamp: new Date().toISOString()
+        });
+      } catch (e) {
+        resolve({
+          status: 'completed',
+          warning: 'Netwerk beveiliging status kon niet worden verwerkt',
+          data: {
+            available: false,
+            reason: 'parse_error'
+          },
+          timestamp: new Date().toISOString()
+        });
+          error: 'Invalid network security data',
+          details: e.message,
+          timestamp: new Date().toISOString()
+        });
+      }
     });
   });
 });
