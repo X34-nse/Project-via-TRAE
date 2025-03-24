@@ -30,6 +30,8 @@ function showSection(sectionId) {
         loadCompanies();
     } else if (sectionId === 'assessments') {
         loadAssessments();
+    } else if (sectionId === 'security-test') {
+        loadSecurityTest();
     }
 }
 
@@ -143,6 +145,67 @@ saveCompanyBtn.addEventListener('click', async () => {
 // Assessments functionality
 async function loadAssessments() {
     // Implement assessment list loading
+}
+
+// Security Test functionality
+async function loadSecurityTest() {
+    const startSecurityTestBtn = document.getElementById('startSecurityTestBtn');
+    const securityTestResults = document.getElementById('securityTestResults');
+
+    startSecurityTestBtn.addEventListener('click', async () => {
+        securityTestResults.innerHTML = `
+            <div class="alert alert-info">
+                <div class="spinner-border spinner-border-sm" role="status"></div>
+                Systeem scan wordt uitgevoerd...
+            </div>
+        `;
+
+        try {
+            const scanResults = await Promise.all([
+                ipcRenderer.invoke('check-antivirus'),
+                ipcRenderer.invoke('check-updates'),
+                ipcRenderer.invoke('check-firewall'),
+                ipcRenderer.invoke('check-backup-status'),
+                ipcRenderer.invoke('check-encryption-status'),
+                ipcRenderer.invoke('check-network-security')
+            ]);
+
+            const [antivirus, updates, firewall, backup, encryption, network] = scanResults;
+
+            securityTestResults.innerHTML = `
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <h5 class="card-title">Beveiligingstest Resultaten</h5>
+                        <div class="mt-3">
+                            <h6>Antivirus Status</h6>
+                            <p>${JSON.stringify(antivirus.data, null, 2)}</p>
+                            
+                            <h6>Windows Updates</h6>
+                            <p>${JSON.stringify(updates.data, null, 2)}</p>
+                            
+                            <h6>Firewall Status</h6>
+                            <p>${JSON.stringify(firewall.data, null, 2)}</p>
+                            
+                            <h6>Backup Status</h6>
+                            <p>${JSON.stringify(backup.data, null, 2)}</p>
+                            
+                            <h6>Encryptie Status</h6>
+                            <p>${JSON.stringify(encryption.data, null, 2)}</p>
+                            
+                            <h6>Netwerk Beveiliging</h6>
+                            <p>${JSON.stringify(network.data, null, 2)}</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+        } catch (error) {
+            securityTestResults.innerHTML = `
+                <div class="alert alert-danger">
+                    Er is een fout opgetreden tijdens de beveiligingstest: ${error.message}
+                </div>
+            `;
+        }
+    });
 }
 
 async function startAssessment(companyId) {

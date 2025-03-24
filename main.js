@@ -455,6 +455,7 @@ ipcMain.handle('check-backup-status', async () => {
     });
   });
 });
+});
   });
 });
 
