@@ -368,8 +368,6 @@ ipcMain.handle('check-encryption-status', async () => {
       }
     });
   });
-
-  });
 });
 
 ipcMain.handle('check-network-security', async () => {
@@ -427,10 +425,6 @@ ipcMain.handle('check-network-security', async () => {
             available: false,
             reason: 'parse_error'
           },
-          timestamp: new Date().toISOString()
-        });
-          error: 'Invalid network security data',
-          details: e.message,
           timestamp: new Date().toISOString()
         });
       }
