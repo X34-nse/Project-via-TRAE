@@ -75,6 +75,10 @@ function initializeTables() {
   )`);
 
   // Assessments table
+  // Drop existing assessments table if it exists
+  db.run(`DROP TABLE IF EXISTS assessments`);
+
+  // Recreate assessments table with correct schema
   db.run(`CREATE TABLE IF NOT EXISTS assessments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     company_id INTEGER,
@@ -181,80 +185,223 @@ ipcMain.handle('save-response', async (event, responseData) => {
   });
 });
 
+// Save assessment
+ipcMain.handle('save-assessment', async (event, assessmentData) => {
+  return new Promise((resolve, reject) => {
+    db.serialize(() => {
+      db.run('BEGIN TRANSACTION');
+
+      try {
+        // Insert assessment
+        db.run(
+          'INSERT INTO assessments (company_id, risk_score, system_scan_results) VALUES (?, ?, ?)',
+          [assessmentData.companyId, assessmentData.riskScore, JSON.stringify(assessmentData.systemScanResults)],
+          function(err) {
+            if (err) {
+              db.run('ROLLBACK');
+              reject(err);
+              return;
+            }
+
+            const assessmentId = this.lastID;
+
+            // Save responses if provided
+            if (assessmentData.responses && assessmentData.responses.length > 0) {
+              const stmt = db.prepare('INSERT INTO responses (assessment_id, question_id, response, notes) VALUES (?, ?, ?, ?)');
+              
+              assessmentData.responses.forEach(response => {
+                stmt.run([assessmentId, response.questionId, response.response, response.notes], (err) => {
+                  if (err) {
+                    db.run('ROLLBACK');
+                    reject(err);
+                    return;
+                  }
+                });
+              });
+              
+              stmt.finalize();
+            }
+
+            db.run('COMMIT');
+            resolve(assessmentId);
+          }
+        );
+      } catch (error) {
+        db.run('ROLLBACK');
+        reject(error);
+      }
+    });
+  });
+});
+
 // System scan handlers
 ipcMain.handle('check-antivirus', async () => {
-  return new Promise((resolve, reject) => {
+  console.log('Starting antivirus check...');
+  return new Promise((resolve) => {
+    const timeout = 10000; // 10 seconden timeout
+    let timedOut = false;
+    
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      resolve({
+        status: 'error',
+        error: 'Antivirus check timed out',
+        timestamp: new Date().toISOString()
+      });
+    }, timeout);
+
     const command = 'Get-MpComputerStatus | Select-Object -Property AMServiceEnabled,AntispywareEnabled,AntivirusEnabled,RealTimeProtectionEnabled | ConvertTo-Json';
-    exec('powershell.exe -Command "' + command + '"', (error, stdout, stderr) => {
+    exec('powershell.exe -Command "' + command + '"', { timeout }, (error, stdout, stderr) => {
+      if (timedOut) return;
+      clearTimeout(timeoutId);
+
       if (error) {
-        console.error('Antivirus check error:', error);
-        resolve({ error: 'Could not check antivirus status', details: error.message });
+        console.error('Antivirus check failed:', error);
+        resolve({
+          status: 'error',
+          error: 'Could not check antivirus status',
+          details: error.message,
+          timestamp: new Date().toISOString()
+        });
         return;
       }
+
       try {
         const status = JSON.parse(stdout);
-        resolve(status);
+        resolve({
+          status: 'success',
+          data: status,
+          timestamp: new Date().toISOString()
+        });
       } catch (e) {
-        resolve({ error: 'Invalid antivirus status data', details: e.message });
+        resolve({
+          status: 'error',
+          error: 'Invalid antivirus status data',
+          details: e.message,
+          timestamp: new Date().toISOString()
+        });
       }
     });
   });
 });
 
 ipcMain.handle('check-updates', async () => {
-  return new Promise((resolve, reject) => {
-    const command = 'Get-HotFix | Sort-Object -Property InstalledOn -Descending | Select-Object -First 5 | ConvertTo-Json';
-    exec('powershell.exe -Command "' + command + '"', (error, stdout, stderr) => {
+  console.log('Starting Windows Update check...');
+  return new Promise((resolve) => {
+    const timeout = 10000; // 10 seconden timeout
+    let timedOut = false;
+
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      resolve({
+        status: 'error',
+        error: 'Windows Update check timed out',
+        timestamp: new Date().toISOString()
+      });
+    }, timeout);
+
+    const command = 'Get-WULastScanSuccessDate | ConvertTo-Json';
+    exec('powershell.exe -Command "' + command + '"', { timeout }, (error, stdout, stderr) => {
+      if (timedOut) return;
+      clearTimeout(timeoutId);
+
       if (error) {
-        console.error('Windows updates check error:', error);
-        resolve({ error: 'Could not check Windows updates', details: error.message });
+        console.error('Windows Update check failed:', error);
+        resolve({
+          status: 'error',
+          error: 'Could not check Windows Update status',
+          details: error.message,
+          timestamp: new Date().toISOString()
+        });
         return;
       }
+
       try {
-        const updates = JSON.parse(stdout);
-        resolve(updates);
+        const status = JSON.parse(stdout);
+        resolve({
+          status: 'success',
+          data: status,
+          timestamp: new Date().toISOString()
+        });
       } catch (e) {
-        resolve({ error: 'Invalid Windows updates data', details: e.message });
+        resolve({
+          status: 'error',
+          error: 'Invalid Windows Update status data',
+          details: e.message,
+          timestamp: new Date().toISOString()
+        });
       }
     });
-  });
 });
 
 ipcMain.handle('check-firewall', async () => {
-  return new Promise((resolve, reject) => {
-    const command = 'Get-NetFirewallProfile | Select-Object Name,Enabled | ConvertTo-Json';
-    exec('powershell.exe -Command "' + command + '"', (error, stdout, stderr) => {
+  console.log('Starting firewall check...');
+  return new Promise((resolve) => {
+    const timeout = 10000; // 10 seconden timeout
+    let timedOut = false;
+
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      resolve({
+        status: 'error',
+        error: 'Firewall check timed out',
+        timestamp: new Date().toISOString()
+      });
+    }, timeout);
+
+    const command = 'Get-NetFirewallProfile | Select-Object -Property Name,Enabled | ConvertTo-Json';
+    exec('powershell.exe -Command "' + command + '"', { timeout }, (error, stdout, stderr) => {
+      if (timedOut) return;
+      clearTimeout(timeoutId);
+
       if (error) {
-        console.error('Firewall check error:', error);
-        resolve({ error: 'Could not check firewall status', details: error.message });
+        console.error('Firewall check failed:', error);
+        resolve({
+          status: 'error',
+          error: 'Could not check firewall status',
+          details: error.message,
+          timestamp: new Date().toISOString()
+        });
         return;
       }
+
       try {
-        const firewallStatus = JSON.parse(stdout);
-        resolve(firewallStatus);
+        const status = JSON.parse(stdout);
+        resolve({
+          status: 'success',
+          data: status,
+          timestamp: new Date().toISOString()
+        });
       } catch (e) {
-        resolve({ error: 'Invalid firewall status data', details: e.message });
+        resolve({
+          status: 'error',
+          error: 'Invalid firewall status data',
+          details: e.message,
+          timestamp: new Date().toISOString()
+        });
       }
     });
-  });
 });
 
 ipcMain.handle('check-backup-status', async () => {
+  console.log('Starting backup check...');
   return new Promise((resolve) => {
-    const timeout = 15000; // Reduced timeout to 15 seconds
-    const results = {};
-    let completedChecks = 0;
+    const timeout = 10000; // 10 seconden timeout
     let timedOut = false;
 
-    // Simplified backup checks focusing on available Windows features
-    const commands = [
-      // Check disk volumes and free space
-      'Get-CimInstance -ClassName Win32_Volume -ErrorAction SilentlyContinue | Where-Object { $_.SystemVolume -eq $false } | Select-Object -Property DriveLetter,Capacity,FreeSpace | ConvertTo-Json',
-      // Check basic system protection settings
-      'Get-ComputerRestorePoint -ErrorAction SilentlyContinue | Select-Object -Last 1 -Property CreationTime,Description | ConvertTo-Json',
-      // Check basic file history status
-      'Get-CimInstance -ClassName Win32_Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*FileHistory*" } | Select-Object Name | ConvertTo-Json'
-    ];
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      resolve({
+        status: 'error',
+        error: 'Backup check timed out',
+        timestamp: new Date().toISOString()
+      });
+    }, timeout);
+
+    const command = 'Get-WBSummary | ConvertTo-Json';
+    exec('powershell.exe -Command "' + command + '"', { timeout }, (error, stdout, stderr) => {
+      if (timedOut) return;
+      clearTimeout(timeoutId);
 
     const timeoutId = setTimeout(() => {
       timedOut = true;
@@ -268,8 +415,12 @@ ipcMain.handle('check-backup-status', async () => {
 
     commands.forEach((command, index) => {
       exec('powershell.exe -Command "' + command + '"', { timeout: timeout }, (error, stdout, stderr) => {
-        if (timedOut) return;
+        if (timedOut) {
+          console.log('Check timed out, skipping...');
+          return;
+        }
         completedChecks++;
+        console.log(`Completed check ${completedChecks} of ${commands.length}`);
 
         if (!error && stdout && stdout.trim()) {
           try {
@@ -277,12 +428,15 @@ ipcMain.handle('check-backup-status', async () => {
             switch(index) {
               case 0:
                 results.volumes = data;
+                console.log('Volume check completed successfully');
                 break;
               case 1:
                 results.systemRestore = data;
+                console.log('System restore check completed successfully');
                 break;
               case 2:
                 results.fileHistory = data;
+                console.log('File history check completed successfully');
                 break;
             }
           } catch (e) {
@@ -309,60 +463,48 @@ ipcMain.handle('check-backup-status', async () => {
 });
 
 ipcMain.handle('check-encryption-status', async () => {
+  console.log('Starting encryption check...');
   return new Promise((resolve) => {
-    const timeout = 10000; // Reduced timeout to 10 seconds
+    const timeout = 10000; // 10 seconden timeout
     let timedOut = false;
 
     const timeoutId = setTimeout(() => {
       timedOut = true;
       resolve({
-        status: 'completed',
-        warning: 'Encryptie status kon niet worden gecontroleerd',
-        data: {
-          available: false,
-          reason: 'timeout'
-        },
+        status: 'error',
+        error: 'Encryption check timed out',
         timestamp: new Date().toISOString()
       });
     }, timeout);
 
-    // Simplified BitLocker check
-    const command = 'Get-CimInstance -ClassName Win32_EncryptableVolume -ErrorAction SilentlyContinue | Select-Object -Property DriveLetter,EncryptionMethod,ProtectionStatus | ConvertTo-Json';
-    exec('powershell.exe -Command "' + command + '"', { timeout: timeout }, (error, stdout, stderr) => {
+    const command = 'Get-BitLockerVolume | Select-Object -Property MountPoint,ProtectionStatus | ConvertTo-Json';
+    exec('powershell.exe -Command "' + command + '"', { timeout }, (error, stdout, stderr) => {
       if (timedOut) return;
       clearTimeout(timeoutId);
 
-      if (error || !stdout.trim()) {
+      if (error) {
+        console.error('Encryption check failed:', error);
         resolve({
-          status: 'completed',
-          warning: 'Encryptie status kon niet worden gecontroleerd',
-          data: {
-            available: false,
-            reason: error ? 'error' : 'no_data'
-          },
+          status: 'error',
+          error: 'Could not check encryption status',
+          details: error.message,
           timestamp: new Date().toISOString()
         });
         return;
       }
 
       try {
-        const encryptionStatus = JSON.parse(stdout);
+        const status = JSON.parse(stdout);
         resolve({
-          status: 'completed',
-          data: {
-            available: true,
-            volumes: encryptionStatus
-          },
+          status: 'success',
+          data: status,
           timestamp: new Date().toISOString()
         });
       } catch (e) {
         resolve({
-          status: 'completed',
-          warning: 'Encryptie status kon niet worden verwerkt',
-          data: {
-            available: false,
-            reason: 'parse_error'
-          },
+          status: 'error',
+          error: 'Invalid encryption status data',
+          details: e.message,
           timestamp: new Date().toISOString()
         });
       }
@@ -371,9 +513,11 @@ ipcMain.handle('check-encryption-status', async () => {
 });
 
 ipcMain.handle('check-network-security', async () => {
+  console.log('Starting network security check...');
   return new Promise((resolve) => {
     const timeout = 10000; // Reduced timeout to 10 seconds
     let timedOut = false;
+    console.log('Initializing network security check with timeout:', timeout, 'ms');
 
     const timeoutId = setTimeout(() => {
       timedOut = true;

@@ -195,36 +195,74 @@ async function startAssessment(companyId) {
     const scanErrors = [];
 
     try {
-        await Promise.all(scanPromises.map(async ({ name, promise }) => {
-            try {
-                const result = await promise;
-                scanResults.push({ name, result });
-            } catch (error) {
-                console.error(`${name} scan error:`, error);
-                scanErrors.push({ name, error: error.message || 'Onbekende fout' });
-            }
-        }));
+        const scanTimeout = 30000; // 30 seconden timeout voor alle scans
+        const scanResults = await Promise.race([
+            Promise.all(scanPromises.map(async ({ name, promise }) => {
+                try {
+                    const result = await promise;
+                    return { name, result, status: 'success' };
+                } catch (error) {
+                    console.error(`${name} scan error:`, error);
+                    return { name, error: error.message || 'Onbekende fout', status: 'error' };
+                }
+            })),
+            new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Systeemscans timeout')), scanTimeout)
+            )
+        ]).catch(error => {
+            console.warn('Systeemscans niet volledig:', error);
+            return scanPromises.map(({ name }) => ({
+                name,
+                error: 'Scan timeout',
+                status: 'timeout'
+            }));
+        });
 
         assessmentData.systemScanResults = scanResults;
 
-        // Update progress display
+        // Update progress display with more detailed status information
         let statusHtml = '';
-        if (scanResults.length > 0) {
+        const successfulScans = scanResults.filter(result => result.status === 'success');
+        const failedScans = scanResults.filter(result => result.status === 'error' || result.status === 'timeout');
+
+        if (successfulScans.length > 0) {
             statusHtml += `
                 <div class="alert alert-success mb-2">
-                    ${scanResults.length} van de ${scanPromises.length} systeemscans succesvol voltooid
+                    <h6>Succesvolle scans (${successfulScans.length}/${scanPromises.length}):</h6>
+                    <ul class="mb-0">
+                        ${successfulScans.map(scan => `<li>${scan.name}</li>`).join('')}
+                    </ul>
                 </div>
             `;
         }
-        if (scanErrors.length > 0) {
+
+        if (failedScans.length > 0) {
             statusHtml += `
                 <div class="alert alert-warning">
-                    ${scanErrors.length} scan(s) niet gelukt:<br>
-                    ${scanErrors.map(err => `- ${err.name}: ${err.error}`).join('<br>')}
+                    <h6>Niet-succesvolle scans (${failedScans.length}):</h6>
+                    <ul class="mb-0">
+                        ${failedScans.map(scan => `
+                            <li>
+                                ${scan.name}: ${scan.error}
+                                ${scan.status === 'timeout' ? ' (Timeout)' : ''}
+                            </li>
+                        `).join('')}
+                    </ul>
+                    <div class="mt-2">
+                        <small>U kunt doorgaan met de vragenlijst. De ontbrekende scans hebben geen invloed op uw antwoorden.</small>
+                    </div>
                 </div>
             `;
         }
+
         scanProgress.innerHTML = statusHtml;
+
+        // Log scan results for debugging
+        console.log('Scan results:', {
+            successful: successfulScans,
+            failed: failedScans,
+            timestamp: new Date().toISOString()
+        });
 
     } catch (error) {
         console.error('Algemene scan error:', error);
