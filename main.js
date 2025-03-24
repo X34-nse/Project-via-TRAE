@@ -388,20 +388,14 @@ ipcMain.handle('check-backup-status', async () => {
   return new Promise((resolve) => {
     const timeout = 10000; // 10 seconden timeout
     let timedOut = false;
+    let completedChecks = 0;
+    const results = {};
 
-    const timeoutId = setTimeout(() => {
-      timedOut = true;
-      resolve({
-        status: 'error',
-        error: 'Backup check timed out',
-        timestamp: new Date().toISOString()
-      });
-    }, timeout);
-
-    const command = 'Get-WBSummary | ConvertTo-Json';
-    exec('powershell.exe -Command "' + command + '"', { timeout }, (error, stdout, stderr) => {
-      if (timedOut) return;
-      clearTimeout(timeoutId);
+    const commands = [
+      'Get-WBSummary | ConvertTo-Json',
+      'Get-ComputerRestorePoint | Select-Object -Property CreationTime,Description | ConvertTo-Json',
+      'Get-WmiObject -Class Win32_ShadowCopy | Select-Object -Property InstallDate,Description | ConvertTo-Json'
+    ];
 
     const timeoutId = setTimeout(() => {
       timedOut = true;
@@ -459,6 +453,8 @@ ipcMain.handle('check-backup-status', async () => {
         }
       });
     });
+  });
+});
   });
 });
 
