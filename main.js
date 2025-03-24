@@ -251,7 +251,7 @@ ipcMain.handle('check-antivirus', async () => {
     }, timeout);
 
     const command = 'Get-MpComputerStatus | Select-Object -Property AMServiceEnabled,AntispywareEnabled,AntivirusEnabled,RealTimeProtectionEnabled | ConvertTo-Json';
-    exec('powershell.exe -Command "' + command + '"', { timeout }, (error, stdout, stderr) => {
+    exec('powershell.exe -Command "' + command + '"', { timeout: timeout }, (error, stdout, stderr) => {
       if (timedOut) return;
       clearTimeout(timeoutId);
 
@@ -301,7 +301,7 @@ ipcMain.handle('check-updates', async () => {
     }, timeout);
 
     const command = 'Get-WULastScanSuccessDate | ConvertTo-Json';
-    exec('powershell.exe -Command "' + command + '"', { timeout }, (error, stdout, stderr) => {
+    exec('powershell.exe -Command "' + command + '"', { timeout: timeout }, (error, stdout, stderr) => {
       if (timedOut) return;
       clearTimeout(timeoutId);
 
@@ -332,6 +332,7 @@ ipcMain.handle('check-updates', async () => {
         });
       }
     });
+  });
 });
 
 ipcMain.handle('check-firewall', async () => {
@@ -350,7 +351,7 @@ ipcMain.handle('check-firewall', async () => {
     }, timeout);
 
     const command = 'Get-NetFirewallProfile | Select-Object -Property Name,Enabled | ConvertTo-Json';
-    exec('powershell.exe -Command "' + command + '"', { timeout }, (error, stdout, stderr) => {
+    exec('powershell.exe -Command "' + command + '"', { timeout: timeout }, (error, stdout, stderr) => {
       if (timedOut) return;
       clearTimeout(timeoutId);
 
@@ -381,6 +382,7 @@ ipcMain.handle('check-firewall', async () => {
         });
       }
     });
+  });
 });
 
 ipcMain.handle('check-backup-status', async () => {
@@ -446,16 +448,13 @@ ipcMain.handle('check-backup-status', async () => {
         if (completedChecks === commands.length) {
           clearTimeout(timeoutId);
           resolve({
-            status: Object.keys(results).some(k => k.startsWith('error_')) ? 'partial' : 'completed',
+            status: Object.keys(results).some(k => k.startsWith('warning_')) ? 'partial' : 'completed',
             data: results,
             timestamp: new Date().toISOString()
           });
         }
       });
     });
-  });
-});
-});
   });
 });
 
@@ -475,7 +474,7 @@ ipcMain.handle('check-encryption-status', async () => {
     }, timeout);
 
     const command = 'Get-BitLockerVolume | Select-Object -Property MountPoint,ProtectionStatus | ConvertTo-Json';
-    exec('powershell.exe -Command "' + command + '"', { timeout }, (error, stdout, stderr) => {
+    exec('powershell.exe -Command "' + command + '"', { timeout: timeout }, (error, stdout, stderr) => {
       if (timedOut) return;
       clearTimeout(timeoutId);
 
