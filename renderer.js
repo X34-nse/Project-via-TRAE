@@ -45,9 +45,9 @@ function updateRiskChart() {
     new Chart(ctx, {
         type: 'bar',
         data: {
-            labels: ['Critical', 'High', 'Medium', 'Low'],
+            labels: ['Kritiek', 'Hoog', 'Gemiddeld', 'Laag'],
             datasets: [{
-                label: 'Risk Distribution',
+                label: 'Risicoverdeling',
                 data: [4, 8, 15, 12],
                 backgroundColor: [
                     'rgba(255, 99, 132, 0.2)',
@@ -87,9 +87,9 @@ async function loadCompanies() {
         companyCard.innerHTML = `
             <div class="card-body">
                 <h5 class="card-title">${company.name}</h5>
-                <p class="card-text">Industry: ${company.industry}</p>
-                <p class="card-text">Size: ${company.size}</p>
-                <button class="btn btn-primary" onclick="startAssessment(${company.id})">Start Assessment</button>
+                <p class="card-text">Industrie: ${company.industry}</p>
+                <p class="card-text">Grootte: ${company.size}</p>
+                <button class="btn btn-primary" onclick="startAssessment(${company.id})">Start Beoordeling</button>
             </div>
         `;
         companiesList.appendChild(companyCard);
@@ -131,7 +131,90 @@ async function loadAssessments() {
 }
 
 async function startAssessment(companyId) {
-    // Implement assessment start logic
+    // Maak een nieuwe sectie voor de vragenlijst
+    const mainContent = document.querySelector('.main-content');
+    const sections = document.querySelectorAll('.section');
+    sections.forEach(section => section.classList.add('d-none'));
+
+    const assessmentSection = document.createElement('div');
+    assessmentSection.className = 'section';
+    assessmentSection.id = 'current-assessment';
+    mainContent.appendChild(assessmentSection);
+
+    // Laad de vragen
+    const questions = require('./questions.js');
+    let currentQuestionIndex = 0;
+
+    // Start beveiligingscontroles op de achtergrond
+    const securityChecks = ipcRenderer.invoke('start-security-checks', companyId);
+
+    function displayCurrentQuestion() {
+        const question = questions[currentQuestionIndex];
+        assessmentSection.innerHTML = `
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">${question.category} - ${question.subcategory}</h5>
+                    <p class="card-text">${question.question}</p>
+                    <div class="mb-3">
+                        <button class="btn btn-success me-2" onclick="answerQuestion(true)">Ja</button>
+                        <button class="btn btn-danger" onclick="answerQuestion(false)">Nee</button>
+                    </div>
+                    <div class="alert alert-info">
+                        <h6>Waarom is dit belangrijk?</h6>
+                        <p>${question.why}</p>
+                        <h6>Hoe pak je dit aan?</h6>
+                        <p>${question.howTo}</p>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    // Functie om antwoorden op te slaan
+    window.answerQuestion = async function(answer) {
+        await ipcRenderer.invoke('save-answer', {
+            companyId,
+            questionId: currentQuestionIndex,
+            answer,
+            category: questions[currentQuestionIndex].category,
+            subcategory: questions[currentQuestionIndex].subcategory
+        });
+
+        currentQuestionIndex++;
+        if (currentQuestionIndex < questions.length) {
+            displayCurrentQuestion();
+        } else {
+            // Wacht op beveiligingscontroles en toon resultaten
+            const securityResults = await securityChecks;
+            showAssessmentResults(companyId, securityResults);
+        }
+    };
+
+    // Start met de eerste vraag
+    displayCurrentQuestion();
+}
+
+async function showAssessmentResults(companyId, securityResults) {
+    const assessmentSection = document.getElementById('current-assessment');
+    const results = await ipcRenderer.invoke('get-assessment-results', companyId);
+    
+    assessmentSection.innerHTML = `
+        <div class="card">
+            <div class="card-body">
+                <h4 class="card-title">Beveiligingsbeoordeling Voltooid</h4>
+                <div class="mt-4">
+                    <h5>Resultaten per Categorie</h5>
+                    <div id="resultsChart"></div>
+                </div>
+                <div class="mt-4">
+                    <button class="btn btn-primary" onclick="showSection('dashboard')">Terug naar Dashboard</button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Update dashboard met nieuwe resultaten
+    loadDashboard();
 }
 
 // Initial load

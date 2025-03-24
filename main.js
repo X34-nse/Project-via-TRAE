@@ -59,9 +59,14 @@ function initializeTables() {
   )`);
 
   // Questions table for security assessment
+  // Drop existing questions table if it exists
+  db.run(`DROP TABLE IF EXISTS questions`);
+
+  // Recreate questions table with correct schema
   db.run(`CREATE TABLE IF NOT EXISTS questions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     category TEXT NOT NULL,
+    subcategory TEXT NOT NULL,
     question TEXT NOT NULL,
     action TEXT,
     how_to TEXT,
@@ -137,15 +142,21 @@ const securityQuestions = require('./questions.js');
 
 // Initialize questions in database
 function initializeQuestions() {
-  const insertQuestion = 'INSERT OR IGNORE INTO questions (category, question, action, how_to, why) VALUES (?, ?, ?, ?, ?)';
+  const insertQuestion = 'INSERT OR IGNORE INTO questions (category, subcategory, question, action, how_to, why) VALUES (?, ?, ?, ?, ?, ?)';
   securityQuestions.forEach(q => {
-    db.run(insertQuestion, [q.category, q.question, q.action, q.howTo, q.why]);
+    db.run(insertQuestion, [q.category, q.subcategory, q.question, q.action, q.howTo, q.why], (err) => {
+      if (err) {
+        console.error('Error inserting question:', err);
+      }
+    });
   });
 }
 
-// Call initializeQuestions after database connection
-initializeTables();
-initializeQuestions();
+// Initialize questions after tables are created
+db.serialize(() => {
+  initializeTables();
+  initializeQuestions();
+});
 
 // Get all questions
 ipcMain.handle('get-questions', async () => {

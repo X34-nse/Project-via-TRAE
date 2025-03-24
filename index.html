@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Security Assessment System</title>
+    <title>Beveiligingsbeoordelingssysteem</title>
     <link href="node_modules/bootstrap/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         .sidebar {
@@ -31,12 +31,12 @@
                         </li>
                         <li class="nav-item">
                             <a class="nav-link" href="#" data-section="companies">
-                                Companies
+                                Bedrijven
                             </a>
                         </li>
                         <li class="nav-item">
                             <a class="nav-link" href="#" data-section="assessments">
-                                Assessments
+                                Beoordelingen
                             </a>
                         </li>
                     </ul>
@@ -50,7 +50,7 @@
                         <div class="col-md-6">
                             <div class="card">
                                 <div class="card-body">
-                                    <h5 class="card-title">Risk Assessment Overview</h5>
+                                    <h5 class="card-title">Risicobeoordeling Overzicht</h5>
                                     <canvas id="riskChart"></canvas>
                                 </div>
                             </div>
@@ -58,7 +58,7 @@
                         <div class="col-md-6">
                             <div class="card">
                                 <div class="card-body">
-                                    <h5 class="card-title">Recent Assessments</h5>
+                                    <h5 class="card-title">Recente Beoordelingen</h5>
                                     <div id="recentAssessments"></div>
                                 </div>
                             </div>
@@ -67,8 +67,8 @@
                 </div>
 
                 <div id="companies-section" class="section d-none">
-                    <h2>Companies</h2>
-                    <button class="btn btn-primary mb-3" id="addCompanyBtn">Add Company</button>
+                    <h2>Bedrijven</h2>
+                    <button class="btn btn-primary mb-3" id="addCompanyBtn">Bedrijf Toevoegen</button>
                     <div id="companiesList"></div>
 
                     <!-- Add Company Modal -->
@@ -76,32 +76,32 @@
                         <div class="modal-dialog">
                             <div class="modal-content">
                                 <div class="modal-header">
-                                    <h5 class="modal-title">Add New Company</h5>
+                                    <h5 class="modal-title">Nieuw Bedrijf Toevoegen</h5>
                                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                                 </div>
                                 <div class="modal-body">
                                     <form id="addCompanyForm">
                                         <div class="mb-3">
-                                            <label class="form-label">Company Name</label>
+                                            <label class="form-label">Bedrijfsnaam</label>
                                             <input type="text" class="form-control" name="name" required>
                                         </div>
                                         <div class="mb-3">
-                                            <label class="form-label">Industry</label>
+                                            <label class="form-label">Industrie</label>
                                             <input type="text" class="form-control" name="industry">
                                         </div>
                                         <div class="mb-3">
-                                            <label class="form-label">Company Size</label>
+                                            <label class="form-label">Bedrijfsgrootte</label>
                                             <select class="form-select" name="size">
-                                                <option value="small">Small (1-50 employees)</option>
-                                                <option value="medium">Medium (51-250 employees)</option>
-                                                <option value="large">Large (250+ employees)</option>
+                                                <option value="small">Klein (1-50 medewerkers)</option>
+                                                <option value="medium">Middel (51-250 medewerkers)</option>
+                                                <option value="large">Groot (250+ medewerkers)
                                             </select>
                                         </div>
                                     </form>
                                 </div>
                                 <div class="modal-footer">
-                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                                    <button type="button" class="btn btn-primary" id="saveCompanyBtn">Save Company</button>
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Sluiten</button>
+                                    <button type="button" class="btn btn-primary" id="saveCompanyBtn">Bedrijf Opslaan</button>
                                 </div>
                             </div>
                         </div>
@@ -109,8 +109,8 @@
                 </div>
 
                 <div id="assessments-section" class="section d-none">
-                    <h2>Security Assessments</h2>
-                    <button class="btn btn-primary mb-3" id="startAssessmentBtn">Start New Assessment</button>
+                    <h2>Beveiligingsbeoordelingen</h2>
+                    <button class="btn btn-primary mb-3" id="startAssessmentBtn">Start Nieuwe Beoordeling</button>
                     <div id="assessmentsList"></div>
                 </div>
             </main>
