@@ -134,11 +134,61 @@ select.form-select:focus {
 }
 
 /* Dashboard Elements */
-.dashboard-stats {
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 20px;
+    padding: 20px 0;
+}
+
+.grid-item {
     background-color: #fff;
-    padding: 20px;
     border-radius: 10px;
-    margin-bottom: 20px;
+    padding: 20px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    transition: transform 0.2s;
+}
+
+.grid-item:hover {
+    transform: translateY(-5px);
+}
+
+.grid-item h3 {
+    color: #2c3e50;
+    margin-bottom: 15px;
+    font-size: 1.2rem;
+}
+
+.status-content {
+    min-height: 100px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+
+.status-indicator {
+    font-size: 1.1rem;
+    margin-top: 10px;
+    padding: 5px 10px;
+    border-radius: 5px;
+    width: 100%;
+    text-align: center;
+}
+
+.status-good {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.status-warning {
+    background-color: #fff3cd;
+    color: #856404;
+}
+
+.status-error {
+    background-color: #f8d7da;
+    color: #721c24;
 }
 
 /* Tables */

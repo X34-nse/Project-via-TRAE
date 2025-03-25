@@ -62,10 +62,6 @@ function initializeTables() {
   )`);
 
   // Questions table for security assessment
-  // Drop existing questions table if it exists
-  db.run(`DROP TABLE IF EXISTS questions`);
-
-  // Recreate questions table with correct schema
   db.run(`CREATE TABLE IF NOT EXISTS questions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     category TEXT NOT NULL,
@@ -77,17 +73,30 @@ function initializeTables() {
   )`);
 
   // Assessments table
-  // Drop existing assessments table if it exists
-  db.run(`DROP TABLE IF EXISTS assessments`);
-
-  // Recreate assessments table with correct schema
   db.run(`CREATE TABLE IF NOT EXISTS assessments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     company_id INTEGER,
     assessment_date DATETIME DEFAULT CURRENT_TIMESTAMP,
     risk_score FLOAT,
-    system_scan_results TEXT,
     FOREIGN KEY (company_id) REFERENCES companies (id)
+  )`);
+
+  // Security Status table
+  db.run(`CREATE TABLE IF NOT EXISTS security_status (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    antivirus_status TEXT,
+    antivirus_message TEXT,
+    updates_status TEXT,
+    updates_message TEXT,
+    firewall_status TEXT,
+    firewall_message TEXT,
+    backup_status TEXT,
+    backup_message TEXT,
+    encryption_status TEXT,
+    encryption_message TEXT,
+    network_status TEXT,
+    network_message TEXT
   )`);
 
   // Responses table
@@ -101,15 +110,27 @@ function initializeTables() {
     FOREIGN KEY (question_id) REFERENCES questions (id)
   )`);
 
-  // System Scans table
-  db.run(`CREATE TABLE IF NOT EXISTS system_scans (
+  // Scan Results table for storing detailed scan data
+  db.run(`CREATE TABLE IF NOT EXISTS scan_results (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    assessment_id INTEGER,
+    scan_type TEXT NOT NULL,
     scan_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-    antivirus_status TEXT,
-    windows_update_status TEXT,
-    firewall_status TEXT,
-    installed_software TEXT,
-    system_info TEXT
+    status TEXT NOT NULL,
+    details TEXT,
+    raw_data TEXT,
+    FOREIGN KEY (assessment_id) REFERENCES assessments (id)
+  )`);  
+
+  // Scan History table for trend analysis
+  db.run(`CREATE TABLE IF NOT EXISTS scan_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scan_result_id INTEGER,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    previous_status TEXT,
+    current_status TEXT,
+    change_details TEXT,
+    FOREIGN KEY (scan_result_id) REFERENCES scan_results (id)
   )`);
 }
 
@@ -140,6 +161,50 @@ ipcMain.handle('create-assessment', async (event, assessmentData) => {
     db.run(sql, [assessmentData.company_id, assessmentData.risk_score], function(err) {
       if (err) reject(err);
       resolve(this.lastID);
+    });
+  });
+});
+
+ipcMain.handle('get-recent-assessments', async () => {
+  return new Promise((resolve, reject) => {
+    const sql = `
+      SELECT a.*, c.name as company_name 
+      FROM assessments a
+      JOIN companies c ON a.company_id = c.id
+      ORDER BY a.assessment_date DESC
+      LIMIT 5
+    `;
+    db.all(sql, [], (err, rows) => {
+      if (err) reject(err);
+      resolve(rows);
+    });
+  });
+});
+
+ipcMain.handle('get-security-status', async () => {
+  return new Promise((resolve, reject) => {
+    const sql = 'SELECT * FROM security_status ORDER BY timestamp DESC LIMIT 1';
+    db.get(sql, [], (err, row) => {
+      if (err) reject(err);
+      if (!row) {
+        resolve({
+          antivirus: { status: 'warning', message: 'Geen data beschikbaar' },
+          updates: { status: 'warning', message: 'Geen data beschikbaar' },
+          firewall: { status: 'warning', message: 'Geen data beschikbaar' },
+          backup: { status: 'warning', message: 'Geen data beschikbaar' },
+          encryption: { status: 'warning', message: 'Geen data beschikbaar' },
+          network: { status: 'warning', message: 'Geen data beschikbaar' }
+        });
+      } else {
+        resolve({
+          antivirus: { status: row.antivirus_status, message: row.antivirus_message },
+          updates: { status: row.updates_status, message: row.updates_message },
+          firewall: { status: row.firewall_status, message: row.firewall_message },
+          backup: { status: row.backup_status, message: row.backup_message },
+          encryption: { status: row.encryption_status, message: row.encryption_message },
+          network: { status: row.network_status, message: row.network_message }
+        });
+      }
     });
   });
 });
@@ -240,14 +305,16 @@ ipcMain.handle('save-assessment', async (event, assessmentData) => {
 ipcMain.handle('check-antivirus', async () => {
   console.log('Starting antivirus check...');
   return new Promise((resolve) => {
-    const timeout = 10000; // 10 seconden timeout
+    const timeout = 15000; // Verhoogd naar 15 seconden voor betere betrouwbaarheid
     let timedOut = false;
     
     const timeoutId = setTimeout(() => {
       timedOut = true;
+      console.error('Antivirus check timed out after', timeout, 'ms');
       resolve({
         status: 'error',
-        error: 'Antivirus check timed out',
+        error: 'Antivirus controle duurde te lang',
+        details: 'De controle werd afgebroken na ' + timeout + ' milliseconden',
         timestamp: new Date().toISOString()
       });
     }, timeout);
@@ -261,8 +328,14 @@ ipcMain.handle('check-antivirus', async () => {
         console.error('Antivirus check failed:', error);
         resolve({
           status: 'error',
-          error: 'Could not check antivirus status',
+          error: 'Kon de antivirus status niet controleren',
           details: error.message,
+          errorCode: error.code || 'UNKNOWN',
+          suggestions: [
+            'Controleer of Windows Defender actief is',
+            'Start de Windows Security service opnieuw op',
+            'Voer de applicatie uit als administrator'
+          ],
           timestamp: new Date().toISOString()
         });
         return;
@@ -290,70 +363,75 @@ ipcMain.handle('check-antivirus', async () => {
 ipcMain.handle('check-updates', async () => {
   console.log('Starting Windows Update check...');
   return new Promise((resolve) => {
-    const timeout = 10000; // 10 second timeout
+    const timeout = 15000; // Verhoogd naar 15 seconden
     let timedOut = false;
+    let checkStartTime = Date.now();
 
     const timeoutId = setTimeout(() => {
       timedOut = true;
+      console.error('Windows Update check timed out after', timeout, 'ms');
       resolve({
         status: 'error',
-        error: 'Windows Update check timed out',
+        error: 'Windows Update controle duurde te lang',
+        details: 'De controle werd afgebroken na ' + timeout + ' milliseconden',
+        suggestions: ['Controleer de Windows Update service status'],
         timestamp: new Date().toISOString()
       });
     }, timeout);
 
-    const command = 'Get-WULastScanSuccessDate | ConvertTo-Json';
-    exec('powershell.exe -Command "' + command + '"', { timeout: timeout }, (error, stdout, stderr) => {
+    const script = `
+      try {
+        $updateSession = New-Object -ComObject Microsoft.Update.Session
+        $updateSearcher = $updateSession.CreateUpdateSearcher()
+        $searchResult = $updateSearcher.Search("IsInstalled=0")
+        
+        $pendingUpdates = @{
+          count = $searchResult.Updates.Count
+          lastSearchTime = $updateSearcher.GetTotalHistoryCount()
+          lastInstallTime = (Get-Item (Join-Path $env:SystemRoot 'WindowsUpdate.log') -ErrorAction SilentlyContinue).LastWriteTime
+        }
+
+        ConvertTo-Json -InputObject @{
+          status = 'success'
+          data = $pendingUpdates
+          source = 'com_object'
+          timestamp = [DateTime]::UtcNow.ToString('o')
+        } -Depth 10 -Compress
+      } catch {
+        ConvertTo-Json -InputObject @{
+          status = 'error'
+          error = 'Could not check Windows Update status'
+          details = $_.Exception.Message
+          timestamp = [DateTime]::UtcNow.ToString('o')
+        } -Compress
+      }
+    `;
+
+    exec('powershell.exe -Command "' + script + '"', { timeout: timeout }, (error, stdout, stderr) => {
       if (timedOut) return;
       clearTimeout(timeoutId);
 
       if (error) {
         console.error('Windows Update check failed:', error);
-
-        // Fallback command in case the first one fails
-        const fallbackCommand = 'Get-WUHistory | Select-Object -First 1 | ConvertTo-Json';
-        exec('powershell.exe -Command "' + fallbackCommand + '"', { timeout: timeout }, (fallbackError, fallbackStdout, fallbackStderr) => {
-          if (timedOut) return;
-
-          if (fallbackError) {
-            console.error('Fallback Windows Update check failed:', fallbackError);
-            resolve({
-              status: 'error',
-              error: 'Could not check Windows Update status',
-              details: 'Both primary and fallback checks failed. Please verify Windows Update service is running.',
-              timestamp: new Date().toISOString()
-            });
-            return;
-          }
-
-          try {
-            const status = JSON.parse(fallbackStdout);
-            resolve({
-              status: 'success',
-              data: status,
-              source: 'fallback',
-              timestamp: new Date().toISOString()
-            });
-          } catch (e) {
-            resolve({
-              status: 'error',
-              error: 'Invalid Windows Update status data',
-              details: e.message,
-              timestamp: new Date().toISOString()
-            });
-          }
+        resolve({
+          status: 'error',
+          error: 'Kon de Windows Update status niet controleren',
+          details: error.message,
+          errorCode: error.code || 'UNKNOWN',
+          suggestions: [
+            'Controleer of de Windows Update service actief is',
+            'Herstart de Windows Update service',
+            'Voer de applicatie uit als administrator'
+          ],
+          executionTime: Date.now() - checkStartTime,
+          timestamp: new Date().toISOString()
         });
         return;
       }
 
       try {
-        const status = JSON.parse(stdout);
-        resolve({
-          status: 'success',
-          data: status,
-          source: 'primary',
-          timestamp: new Date().toISOString()
-        });
+        const result = JSON.parse(stdout.trim());
+        resolve(result);
       } catch (e) {
         resolve({
           status: 'error',
@@ -369,20 +447,41 @@ ipcMain.handle('check-updates', async () => {
 ipcMain.handle('check-firewall', async () => {
   console.log('Starting firewall check...');
   return new Promise((resolve) => {
-    const timeout = 10000; // 10 seconden timeout
+    const timeout = 15000; // Verhoogd naar 15 seconden
     let timedOut = false;
+    let checkStartTime = Date.now();
 
     const timeoutId = setTimeout(() => {
       timedOut = true;
+      console.error('Firewall check timed out after', timeout, 'ms');
       resolve({
         status: 'error',
-        error: 'Firewall check timed out',
+        error: 'Firewall controle duurde te lang',
+        details: 'De controle werd afgebroken na ' + timeout + ' milliseconden',
+        suggestions: ['Controleer de Windows Firewall service status'],
         timestamp: new Date().toISOString()
       });
     }, timeout);
 
-    const command = 'Get-NetFirewallProfile | Select-Object -Property Name,Enabled | ConvertTo-Json';
-    exec('powershell.exe -Command "' + command + '"', { timeout: timeout }, (error, stdout, stderr) => {
+    const script = `
+      try {
+        $status = Get-NetFirewallProfile | Select-Object -Property Name,Enabled
+        Write-Output (ConvertTo-Json -InputObject @{
+          status = 'success'
+          data = $status
+          timestamp = [DateTime]::UtcNow.ToString('o')
+        } -Depth 10 -Compress)
+      } catch {
+        Write-Output (ConvertTo-Json -InputObject @{
+          status = 'error'
+          error = 'Could not check firewall status'
+          details = $_.Exception.Message
+          timestamp = [DateTime]::UtcNow.ToString('o')
+        } -Compress)
+      }
+    `;
+
+    exec('powershell.exe -Command "' + script + '"', { timeout: timeout }, (error, stdout, stderr) => {
       if (timedOut) return;
       clearTimeout(timeoutId);
 
@@ -390,20 +489,23 @@ ipcMain.handle('check-firewall', async () => {
         console.error('Firewall check failed:', error);
         resolve({
           status: 'error',
-          error: 'Could not check firewall status',
+          error: 'Kon de firewall status niet controleren',
           details: error.message,
+          errorCode: error.code || 'UNKNOWN',
+          suggestions: [
+            'Controleer of de Windows Firewall service actief is',
+            'Herstart de Windows Firewall service',
+            'Voer de applicatie uit als administrator'
+          ],
+          executionTime: Date.now() - checkStartTime,
           timestamp: new Date().toISOString()
         });
         return;
       }
 
       try {
-        const status = JSON.parse(stdout);
-        resolve({
-          status: 'success',
-          data: status,
-          timestamp: new Date().toISOString()
-        });
+        const result = JSON.parse(stdout.trim());
+        resolve(result);
       } catch (e) {
         resolve({
           status: 'error',
@@ -414,14 +516,15 @@ ipcMain.handle('check-firewall', async () => {
       }
     });
   });
-});
+  });
 
 ipcMain.handle('check-backup-status', async () => {
   console.log('Starting backup check...');
   return new Promise((resolve) => {
-    const timeout = 10000; // 10 seconden timeout
+    const timeout = 15000; // Verhoogd naar 15 seconden
     let timedOut = false;
     let completedChecks = 0;
+    let checkStartTime = Date.now();
     const results = {};
 
     const commands = [
@@ -432,10 +535,18 @@ ipcMain.handle('check-backup-status', async () => {
 
     const timeoutId = setTimeout(() => {
       timedOut = true;
+      console.error('Backup check timed out after', timeout, 'ms');
       resolve({
-        status: 'completed',
-        warning: 'Sommige back-up controles konden niet worden uitgevoerd',
+        status: 'warning',
+        error: 'Back-up controle duurde te lang',
+        details: 'De controle werd afgebroken na ' + timeout + ' milliseconden',
+        suggestions: [
+          'Controleer of de Windows Backup service actief is',
+          'Controleer of er voldoende schijfruimte is',
+          'Voer de applicatie uit als administrator'
+        ],
         data: results,
+        executionTime: Date.now() - checkStartTime,
         timestamp: new Date().toISOString()
       });
     }, timeout);
@@ -492,20 +603,67 @@ ipcMain.handle('check-backup-status', async () => {
 ipcMain.handle('check-encryption-status', async () => {
   console.log('Starting encryption check...');
   return new Promise((resolve) => {
-    const timeout = 10000; // 10 seconden timeout
+    const timeout = 15000; // Verhoogd naar 15 seconden
     let timedOut = false;
+    let checkStartTime = Date.now();
 
     const timeoutId = setTimeout(() => {
       timedOut = true;
+      console.error('Encryption check timed out after', timeout, 'ms');
       resolve({
         status: 'error',
-        error: 'Encryption check timed out',
+        error: 'Encryptie controle duurde te lang',
+        details: 'De controle werd afgebroken na ' + timeout + ' milliseconden',
+        suggestions: [
+          'Controleer of BitLocker is geïnstalleerd',
+          'Controleer of TPM beschikbaar is',
+          'Voer de applicatie uit als administrator'
+        ],
+        executionTime: Date.now() - checkStartTime,
         timestamp: new Date().toISOString()
       });
     }, timeout);
 
-    const command = 'Get-BitLockerVolume | Select-Object -Property MountPoint,ProtectionStatus | ConvertTo-Json';
-    exec('powershell.exe -Command "' + command + '"', { timeout: timeout }, (error, stdout, stderr) => {
+    const script = `
+      try {
+        $volumes = Get-CimInstance -ClassName Win32_Volume -ErrorAction Stop |
+          Where-Object { $_.DriveLetter -ne $null } |
+          Select-Object DriveLetter, Label
+
+        $encryptionStatus = @{}
+        foreach ($volume in $volumes) {
+          try {
+            $bitlockerStatus = Get-BitLockerVolume -MountPoint $volume.DriveLetter -ErrorAction Stop
+            $encryptionStatus[$volume.DriveLetter] = @{
+              label = $volume.Label
+              protected = $bitlockerStatus.ProtectionStatus -eq 'On'
+              method = 'BitLocker'
+            }
+          } catch {
+            $fsutil = & fsutil behavior query EncryptPagingFile 2>&1
+            $encryptionStatus[$volume.DriveLetter] = @{
+              label = $volume.Label
+              protected = $fsutil -match 'EncryptPagingFile = 1'
+              method = 'System'
+            }
+          }
+        }
+        ConvertTo-Json -InputObject @{
+          status = 'success'
+          data = $encryptionStatus
+          timestamp = [DateTime]::UtcNow.ToString('o')
+        } -Depth 10 -Compress
+      } catch {
+        ConvertTo-Json -InputObject @{
+          status = 'warning'
+          error = 'Limited encryption status check available'
+          details = "Run script as administrator for full encryption status"
+          timestamp = [DateTime]::UtcNow.ToString('o')
+        } -Compress
+      }
+    `;
+
+    exec('powershell.exe -Command "' + script + '"', { timeout: timeout }, (error, stdout, stderr) => {
       if (timedOut) return;
       clearTimeout(timeoutId);
 
@@ -521,12 +679,8 @@ ipcMain.handle('check-encryption-status', async () => {
       }
 
       try {
-        const status = JSON.parse(stdout);
-        resolve({
-          status: 'success',
-          data: status,
-          timestamp: new Date().toISOString()
-        });
+        const result = JSON.parse(stdout.trim());
+        resolve(result);
       } catch (e) {
         resolve({
           status: 'error',
@@ -542,19 +696,28 @@ ipcMain.handle('check-encryption-status', async () => {
 ipcMain.handle('check-network-security', async () => {
   console.log('Starting network security check...');
   return new Promise((resolve) => {
-    const timeout = 10000; // Reduced timeout to 10 seconds
+    const timeout = 15000; // Verhoogd naar 15 seconden
     let timedOut = false;
+    let checkStartTime = Date.now();
     console.log('Initializing network security check with timeout:', timeout, 'ms');
 
     const timeoutId = setTimeout(() => {
       timedOut = true;
+      console.error('Network security check timed out after', timeout, 'ms');
       resolve({
-        status: 'completed',
-        warning: 'Netwerk beveiliging kon niet worden gecontroleerd',
+        status: 'error',
+        error: 'Netwerk beveiliging controle duurde te lang',
+        details: 'De controle werd afgebroken na ' + timeout + ' milliseconden',
+        suggestions: [
+          'Controleer de netwerkverbinding',
+          'Controleer de Windows Firewall service',
+          'Voer de applicatie uit als administrator'
+        ],
         data: {
           available: false,
           reason: 'timeout'
         },
+        executionTime: Date.now() - checkStartTime,
         timestamp: new Date().toISOString()
       });
     }, timeout);
@@ -605,10 +768,25 @@ ipcMain.handle('check-network-security', async () => {
 
 // Save system scan results
 ipcMain.handle('save-system-scan', async (event, scanData) => {
+  console.log('Saving system scan results...');
   return new Promise((resolve, reject) => {
     const sql = 'INSERT INTO system_scans (antivirus_status, windows_update_status, firewall_status, installed_software, system_info) VALUES (?, ?, ?, ?, ?)';
     db.run(sql, [scanData.antivirus_status, scanData.windows_update_status, scanData.firewall_status, scanData.installed_software, scanData.system_info], function(err) {
-      if (err) reject(err);
+      if (err) {
+        console.error('Failed to save system scan:', err);
+        reject({
+          error: 'Kon systeemscans niet opslaan',
+          details: err.message,
+          code: err.code,
+          suggestions: [
+            'Controleer de database verbinding',
+            'Controleer of de database niet vergrendeld is',
+            'Controleer de schrijfrechten'
+          ]
+        });
+        return;
+      }
+      console.log('System scan saved successfully with ID:', this.lastID);
       resolve(this.lastID);
     });
   });
@@ -616,6 +794,7 @@ ipcMain.handle('save-system-scan', async (event, scanData) => {
 
 // Get assessment results
 ipcMain.handle('get-assessment-results', async (event, assessmentId) => {
+  console.log('Retrieving assessment results for ID:', assessmentId);
   return new Promise((resolve, reject) => {
     const sql = `
       SELECT r.*, q.category, q.question, q.action, q.how_to, q.why
@@ -625,7 +804,24 @@ ipcMain.handle('get-assessment-results', async (event, assessmentId) => {
       ORDER BY q.category, q.id
     `;
     db.all(sql, [assessmentId], (err, rows) => {
-      if (err) reject(err);
+      if (err) {
+        console.error('Failed to retrieve assessment results:', err);
+        reject({
+          error: 'Kon assessment resultaten niet ophalen',
+          details: err.message,
+          code: err.code,
+          suggestions: [
+            'Controleer of de assessment ID correct is',
+            'Controleer de database verbinding'
+          ]
+        });
+        return;
+      }
+      if (rows.length === 0) {
+        console.warn('No assessment results found for ID:', assessmentId);
+      } else {
+        console.log('Successfully retrieved', rows.length, 'assessment results');
+      }
       resolve(rows);
     });
   });

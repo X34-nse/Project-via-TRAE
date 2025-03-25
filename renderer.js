@@ -40,6 +40,37 @@ async function loadDashboard() {
     const companies = await ipcRenderer.invoke('get-companies');
     updateRiskChart();
     loadRecentAssessments();
+    loadSecurityStatus();
+}
+
+async function loadSecurityStatus() {
+    try {
+        const securityData = await ipcRenderer.invoke('get-security-status');
+        
+        updateStatusCard('antivirus-status', securityData.antivirus);
+        updateStatusCard('windows-updates', securityData.updates);
+        updateStatusCard('firewall-status', securityData.firewall);
+        updateStatusCard('backup-status', securityData.backup);
+        updateStatusCard('encryption-status', securityData.encryption);
+        updateStatusCard('network-status', securityData.network);
+    } catch (error) {
+        console.error('Error loading security status:', error);
+    }
+}
+
+function updateStatusCard(cardId, data) {
+    const statusContent = document.querySelector(`#${cardId} .status-content`);
+    if (!statusContent) return;
+
+    const statusClass = data.status === 'good' ? 'status-good' : 
+                       data.status === 'warning' ? 'status-warning' : 
+                       'status-error';
+
+    statusContent.innerHTML = `
+        <div class="status-indicator ${statusClass}">
+            ${data.message}
+        </div>
+    `;
 }
 
 function updateRiskChart() {
@@ -143,8 +174,38 @@ saveCompanyBtn.addEventListener('click', async () => {
 });
 
 // Assessments functionality
-async function loadAssessments() {
-    // Implement assessment list loading
+async function loadRecentAssessments() {
+    try {
+        const recentAssessments = await ipcRenderer.invoke('get-recent-assessments');
+        const recentAssessmentsContainer = document.getElementById('recentAssessments');
+
+        if (!recentAssessments || recentAssessments.length === 0) {
+            recentAssessmentsContainer.innerHTML = `
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle"></i>
+                    Geen recente beoordelingen beschikbaar
+                </div>
+            `;
+            return;
+        }
+
+        recentAssessmentsContainer.innerHTML = recentAssessments.map(assessment => `
+            <div class="assessment-card">
+                <h5>Bedrijf: ${assessment.company_name}</h5>
+                <p>Datum: ${new Date(assessment.assessment_date).toLocaleDateString()}</p>
+                <p>Risico Score: ${assessment.risk_score}</p>
+            </div>
+        `).join('');
+    } catch (error) {
+        console.error('Error loading recent assessments:', error);
+        const recentAssessmentsContainer = document.getElementById('recentAssessments');
+        recentAssessmentsContainer.innerHTML = `
+            <div class="alert alert-danger">
+                <i class="fas fa-exclamation-circle"></i>
+                Er is een fout opgetreden bij het laden van de beoordelingen
+            </div>
+        `;
+    }
 }
 
 // Security Test functionality
