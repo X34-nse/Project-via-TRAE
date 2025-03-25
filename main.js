@@ -1,9 +1,51 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu } = require('electron');
 const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
 const { exec } = require('child_process');
+const dbLogger = require('./database_logger');
 
 let mainWindow;
+let tray;
+
+// Add these constants at the top of the file, after the require statements
+const SYSTEM_CHECK_TIMEOUT = 15000; // 15 seconds timeout for system checks
+const DB_OPERATION_TIMEOUT = 10000; // 10 seconds timeout for database operations
+const STATUS = {
+    SUCCESS: 'succes',
+    ERROR: 'fout',
+    WARNING: 'waarschuwing',
+    PARTIAL: 'gedeeltelijk',
+    COMPLETED: 'voltooid'
+};
+
+// Standard error responses
+const ERROR_RESPONSES = {
+    TIMEOUT: (service) => ({
+        status: STATUS.ERROR,
+        error: `${service}-controle time-out`,
+        details: `Controle afgebroken na ${SYSTEM_CHECK_TIMEOUT} milliseconden`,
+        timestamp: new Date().toISOString()
+    }),
+    SERVICE_ERROR: (service, error) => ({
+        status: STATUS.ERROR,
+        error: `Kon de ${service} status niet controleren`,
+        details: error.message,
+        errorCode: error.code || 'ONBEKEND',
+        timestamp: new Date().toISOString()
+    })
+};
+
+function createTray() {
+  tray = new Tray(path.join(__dirname, 'assets', 'tray-icon.png'));
+  const contextMenu = Menu.buildFromTemplate([
+    { label: 'Open Dashboard', click: () => mainWindow.show() },
+    { label: 'Start Scan', click: () => startAutomatedScan() },
+    { type: 'separator' },
+    { label: 'Exit', click: () => app.quit() }
+  ]);
+  tray.setToolTip('Beveiligingsbeoordelingssysteem');
+  tray.setContextMenu(contextMenu);
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -11,6 +53,7 @@ function createWindow() {
     height: 1000,
     minWidth: 1200,
     minHeight: 800,
+    show: false,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
@@ -18,6 +61,7 @@ function createWindow() {
   });
 
   mainWindow.loadFile('index.html');
+  mainWindow.once('ready-to-show', () => mainWindow.show());
 
   // Open DevTools in development
   // mainWindow.webContents.openDevTools();
@@ -52,106 +96,145 @@ const db = new sqlite3.Database('security_assessment.db', (err) => {
 });
 
 function initializeTables() {
-  // Companies table
-  db.run(`CREATE TABLE IF NOT EXISTS companies (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    industry TEXT,
-    size TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
+  return new Promise((resolve, reject) => {
+    db.serialize(() => {
+      try {
+        // Companies table
+        db.run(`CREATE TABLE IF NOT EXISTS companies (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          industry TEXT,
+          size TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`);
 
-  // Questions table for security assessment
-  db.run(`CREATE TABLE IF NOT EXISTS questions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    category TEXT NOT NULL,
-    subcategory TEXT NOT NULL,
-    question TEXT NOT NULL,
-    action TEXT,
-    how_to TEXT,
-    why TEXT
-  )`);
+        // Questions table for security assessment
+        db.run(`CREATE TABLE IF NOT EXISTS questions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          category TEXT NOT NULL,
+          subcategory TEXT NOT NULL,
+          question TEXT NOT NULL,
+          action TEXT,
+          how_to TEXT,
+          why TEXT
+        )`);
 
-  // Assessments table
-  db.run(`CREATE TABLE IF NOT EXISTS assessments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    company_id INTEGER,
-    assessment_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-    risk_score FLOAT,
-    FOREIGN KEY (company_id) REFERENCES companies (id)
-  )`);
+        // Assessments table
+        db.run(`CREATE TABLE IF NOT EXISTS assessments (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          company_id INTEGER,
+          assessment_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+          risk_score FLOAT,
+          FOREIGN KEY (company_id) REFERENCES companies (id)
+        )`);
 
-  // Security Status table
-  db.run(`CREATE TABLE IF NOT EXISTS security_status (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    antivirus_status TEXT,
-    antivirus_message TEXT,
-    updates_status TEXT,
-    updates_message TEXT,
-    firewall_status TEXT,
-    firewall_message TEXT,
-    backup_status TEXT,
-    backup_message TEXT,
-    encryption_status TEXT,
-    encryption_message TEXT,
-    network_status TEXT,
-    network_message TEXT
-  )`);
+        // Security Status table
+        db.run(`CREATE TABLE IF NOT EXISTS security_status (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+          antivirus_status TEXT,
+          antivirus_message TEXT,
+          updates_status TEXT,
+          updates_message TEXT,
+          firewall_status TEXT,
+          firewall_message TEXT,
+          backup_status TEXT,
+          backup_message TEXT,
+          encryption_status TEXT,
+          encryption_message TEXT,
+          network_status TEXT,
+          network_message TEXT
+        )`);
 
-  // Responses table
-  db.run(`CREATE TABLE IF NOT EXISTS responses (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    assessment_id INTEGER,
-    question_id INTEGER,
-    response TEXT,
-    notes TEXT,
-    FOREIGN KEY (assessment_id) REFERENCES assessments (id),
-    FOREIGN KEY (question_id) REFERENCES questions (id)
-  )`);
+        // Responses table
+        db.run(`CREATE TABLE IF NOT EXISTS responses (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          assessment_id INTEGER,
+          question_id INTEGER,
+          response TEXT,
+          notes TEXT,
+          FOREIGN KEY (assessment_id) REFERENCES assessments (id),
+          FOREIGN KEY (question_id) REFERENCES questions (id)
+        )`);
 
-  // Scan Results table for storing detailed scan data
-  db.run(`CREATE TABLE IF NOT EXISTS scan_results (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    assessment_id INTEGER,
-    scan_type TEXT NOT NULL,
-    scan_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-    status TEXT NOT NULL,
-    details TEXT,
-    raw_data TEXT,
-    error_message TEXT,
-    retry_count INTEGER DEFAULT 0,
-    last_success_date DATETIME,
-    FOREIGN KEY (assessment_id) REFERENCES assessments (id)
-  )`);  
+        // Scan Results table for storing detailed scan data
+        db.run(`CREATE TABLE IF NOT EXISTS scan_results (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          assessment_id INTEGER,
+          scan_type TEXT NOT NULL,
+          scan_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+          status TEXT NOT NULL,
+          details TEXT,
+          raw_data TEXT,
+          error_message TEXT,
+          retry_count INTEGER DEFAULT 0,
+          last_success_date DATETIME,
+          FOREIGN KEY (assessment_id) REFERENCES assessments (id)
+        )`);  
 
-  // Scan History table for trend analysis
-  db.run(`CREATE TABLE IF NOT EXISTS scan_history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    scan_result_id INTEGER,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    previous_status TEXT,
-    current_status TEXT,
-    change_details TEXT,
-    FOREIGN KEY (scan_result_id) REFERENCES scan_results (id)
-  )`);
+        // Scan History table for trend analysis
+        db.run(`CREATE TABLE IF NOT EXISTS scan_history (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          scan_result_id INTEGER,
+          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+          previous_status TEXT,
+          current_status TEXT,
+          change_details TEXT,
+          FOREIGN KEY (scan_result_id) REFERENCES scan_results (id)
+        )`);
+
+        // System scans table
+        db.run(`
+            CREATE TABLE IF NOT EXISTS system_scans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                antivirus_status TEXT,
+                windows_update_status TEXT,
+                firewall_status TEXT,
+                backup_status TEXT,
+                encryption_status TEXT,
+                network_status TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        dbLogger.info('DATABASE_INIT', 'Tables initialized successfully');
+        resolve();
+      } catch (error) {
+        dbLogger.error('DATABASE_INIT_ERROR', error);
+        reject(error);
+      }
+    });
+  });
 }
 
 // IPC handlers for database operations
 
 // Handler for saving scan results
 ipcMain.handle('save-scan-results', async (event, { assessmentId, scanResults }) => {
+  if (!assessmentId || !scanResults) {
+    throw new Error('Ongeldige parameters voor scan resultaten');
+  }
+
+  dbLogger.transaction('save-scan-results');
   return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error('Database operatie time-out'));
+    }, DB_OPERATION_TIMEOUT);
+
     db.serialize(() => {
       db.run('BEGIN TRANSACTION');
+      dbLogger.info('BEGIN_TRANSACTION', { assessmentId });
 
       try {
-        const stmt = db.prepare(
-          'INSERT INTO scan_results (assessment_id, scan_type, status, details, raw_data, error_message, retry_count, last_success_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-        );
+        const stmt = db.prepare(`
+          INSERT INTO scan_results (
+            assessment_id, scan_type, status, details, 
+            raw_data, error_message, retry_count, last_success_date
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `);
 
         scanResults.forEach(result => {
-          const lastSuccessDate = result.status === 'success' ? new Date().toISOString() : null;
+          const lastSuccessDate = result.status === STATUS.SUCCESS ? new Date().toISOString() : null;
           const retryCount = result.retryCount || 0;
 
           stmt.run(
@@ -165,43 +248,28 @@ ipcMain.handle('save-scan-results', async (event, { assessmentId, scanResults })
             lastSuccessDate,
             (err) => {
               if (err) {
-                console.error('Error saving scan result:', err);
-                db.run('ROLLBACK');
-                reject(err);
-                return;
+                dbLogger.queryError('INSERT scan_results', { assessmentId, result }, err);
+                throw err;
               }
+              dbLogger.query('INSERT scan_results', { assessmentId, result });
             }
           );
-
-          // Als de scan succesvol is, voeg een history record toe
-          if (result.status === 'success' || result.status === 'error') {
-            const historyStmt = db.prepare(
-              'INSERT INTO scan_history (scan_result_id, previous_status, current_status, change_details) VALUES (?, ?, ?, ?)'
-            );
-            
-            historyStmt.run(
-              this.lastID,
-              result.previousStatus || null,
-              result.status,
-              JSON.stringify({
-                timestamp: new Date().toISOString(),
-                details: result.details || null,
-                error: result.error || null
-              }),
-              (historyErr) => {
-                if (historyErr) {
-                  console.error('Error saving scan history:', historyErr);
-                }
-              }
-            );
-            historyStmt.finalize();
-          }
         });
 
         stmt.finalize();
-        db.run('COMMIT');
-        resolve();
+        
+        db.run('COMMIT', (err) => {
+          clearTimeout(timeout);
+          if (err) {
+            dbLogger.error('COMMIT_ERROR', err);
+            db.run('ROLLBACK');
+            reject(err);
+            return;
+          }
+          resolve();
+        });
       } catch (error) {
+        clearTimeout(timeout);
         console.error('Error in save-scan-results:', error);
         db.run('ROLLBACK');
         reject(error);
@@ -258,31 +326,131 @@ ipcMain.handle('get-recent-assessments', async () => {
 
 ipcMain.handle('get-security-status', async () => {
   return new Promise((resolve, reject) => {
-    const sql = 'SELECT * FROM security_status ORDER BY timestamp DESC LIMIT 1';
+    const sql = `
+      SELECT * FROM system_scans 
+      ORDER BY timestamp DESC 
+      LIMIT 1
+    `;
+    
     db.get(sql, [], (err, row) => {
-      if (err) reject(err);
+      if (err) {
+        dbLogger.queryError('SELECT system_scans', {}, err);
+        reject(err);
+        return;
+      }
+
       if (!row) {
         resolve({
-          antivirus: { status: 'warning', message: 'Geen data beschikbaar' },
-          updates: { status: 'warning', message: 'Geen data beschikbaar' },
-          firewall: { status: 'warning', message: 'Geen data beschikbaar' },
-          backup: { status: 'warning', message: 'Geen data beschikbaar' },
-          encryption: { status: 'warning', message: 'Geen data beschikbaar' },
-          network: { status: 'warning', message: 'Geen data beschikbaar' }
+          antivirus: { status: STATUS.WARNING, message: 'Geen data beschikbaar' },
+          updates: { status: STATUS.WARNING, message: 'Geen data beschikbaar' },
+          firewall: { status: STATUS.WARNING, message: 'Geen data beschikbaar' },
+          backup: { status: STATUS.WARNING, message: 'Geen data beschikbaar' },
+          encryption: { status: STATUS.WARNING, message: 'Geen data beschikbaar' },
+          network: { status: STATUS.WARNING, message: 'Geen data beschikbaar' }
         });
-      } else {
-        resolve({
-          antivirus: { status: row.antivirus_status, message: row.antivirus_message },
-          updates: { status: row.updates_status, message: row.updates_message },
-          firewall: { status: row.firewall_status, message: row.firewall_message },
-          backup: { status: row.backup_status, message: row.backup_message },
-          encryption: { status: row.encryption_status, message: row.encryption_message },
-          network: { status: row.network_status, message: row.network_message }
-        });
+        return;
       }
+
+      // Parse stored JSON data
+      const antivirusData = JSON.parse(row.antivirus_status || '{}');
+      const updatesData = JSON.parse(row.windows_update_status || '{}');
+      const firewallData = JSON.parse(row.firewall_status || '{}');
+      const backupData = JSON.parse(row.backup_status || '{}');
+      const encryptionData = JSON.parse(row.encryption_status || '{}');
+      const networkData = JSON.parse(row.network_status || '{}');
+
+      resolve({
+        antivirus: formatStatusData('Antivirus', antivirusData),
+        updates: formatStatusData('Windows Updates', updatesData),
+        firewall: formatStatusData('Firewall', firewallData),
+        backup: formatStatusData('Backup', backupData),
+        encryption: formatStatusData('Encryptie', encryptionData),
+        network: formatStatusData('Netwerk', networkData)
+      });
     });
   });
 });
+
+// Helper function to format status data
+function formatStatusData(type, data) {
+  if (!data || Object.keys(data).length === 0) {
+    return {
+      status: STATUS.WARNING,
+      message: 'Geen data beschikbaar',
+      details: null
+    };
+  }
+
+  // Format specific messages based on scan type
+  switch (type) {
+    case 'Antivirus':
+      return formatAntivirusStatus(data);
+    case 'Windows Updates':
+      return formatUpdatesStatus(data);
+    case 'Firewall':
+      return formatFirewallStatus(data);
+    case 'Backup':
+      return formatBackupStatus(data);
+    case 'Encryptie':
+      return formatEncryptionStatus(data);
+    case 'Netwerk':
+      return formatNetworkStatus(data);
+    default:
+      return {
+        status: data.status || STATUS.WARNING,
+        message: data.message || 'Status onbekend',
+        details: data
+      };
+  }
+}
+
+// Specific formatters for each type
+function formatAntivirusStatus(data) {
+  if (data.data && data.data.AntivirusEnabled) {
+    return {
+      status: STATUS.SUCCESS,
+      message: 'Antivirus is actief en up-to-date',
+      details: data.data
+    };
+  }
+  return {
+    status: STATUS.ERROR,
+    message: 'Antivirus is niet actief of verouderd',
+    details: data.data
+  };
+}
+
+function formatUpdatesStatus(data) {
+  if (data.data && data.data.count === 0) {
+    return {
+      status: STATUS.SUCCESS,
+      message: 'Systeem is up-to-date',
+      details: data.data
+    };
+  }
+  return {
+    status: STATUS.WARNING,
+    message: `${data.data?.count || 'Onbekend aantal'} updates beschikbaar`,
+    details: data.data
+  };
+}
+
+function formatFirewallStatus(data) {
+  if (data.data && data.data.some(profile => profile.Enabled)) {
+    return {
+      status: STATUS.SUCCESS,
+      message: 'Firewall is actief',
+      details: data.data
+    };
+  }
+  return {
+    status: STATUS.ERROR,
+    message: 'Firewall is niet actief',
+    details: data.data
+  };
+}
+
+// ... Add similar formatters for backup, encryption, and network ...
 
 // Load questions from questions.js
 const securityQuestions = require('./questions.js');
@@ -332,6 +500,7 @@ ipcMain.handle('save-assessment', async (event, assessmentData) => {
   return new Promise((resolve, reject) => {
     db.serialize(() => {
       db.run('BEGIN TRANSACTION');
+      dbLogger.info('BEGIN_TRANSACTION', { assessmentId });
 
       try {
         // Insert assessment
@@ -378,55 +547,38 @@ ipcMain.handle('save-assessment', async (event, assessmentData) => {
 
 // System scan handlers
 ipcMain.handle('check-antivirus', async () => {
-  console.log('Starting antivirus check...');
+  console.log('Antiviruscontrole starten...');
   return new Promise((resolve) => {
-    const timeout = 15000; // Verhoogd naar 15 seconden voor betere betrouwbaarheid
     let timedOut = false;
     
     const timeoutId = setTimeout(() => {
       timedOut = true;
-      console.error('Antivirus check timed out after', timeout, 'ms');
-      resolve({
-        status: 'error',
-        error: 'Antivirus controle duurde te lang',
-        details: 'De controle werd afgebroken na ' + timeout + ' milliseconden',
-        timestamp: new Date().toISOString()
-      });
-    }, timeout);
+      console.error('Antiviruscontrole time-out na', SYSTEM_CHECK_TIMEOUT, 'ms');
+      resolve(ERROR_RESPONSES.TIMEOUT('Antivirus'));
+    }, SYSTEM_CHECK_TIMEOUT);
 
     const command = 'Get-MpComputerStatus | Select-Object -Property AMServiceEnabled,AntispywareEnabled,AntivirusEnabled,RealTimeProtectionEnabled | ConvertTo-Json';
-    exec('powershell.exe -Command "' + command + '"', { timeout: timeout }, (error, stdout, stderr) => {
+    exec('powershell.exe -Command "' + command + '"', { timeout: SYSTEM_CHECK_TIMEOUT }, (error, stdout, stderr) => {
       if (timedOut) return;
       clearTimeout(timeoutId);
 
       if (error) {
-        console.error('Antivirus check failed:', error);
-        resolve({
-          status: 'error',
-          error: 'Kon de antivirus status niet controleren',
-          details: error.message,
-          errorCode: error.code || 'UNKNOWN',
-          suggestions: [
-            'Controleer of Windows Defender actief is',
-            'Start de Windows Security service opnieuw op',
-            'Voer de applicatie uit als administrator'
-          ],
-          timestamp: new Date().toISOString()
-        });
+        console.error('Antiviruscontrole mislukt:', error);
+        resolve(ERROR_RESPONSES.SERVICE_ERROR('antivirus', error));
         return;
       }
 
       try {
-        const status = JSON.parse(stdout);
+        const status = JSON.parse(stdout.trim());
         resolve({
-          status: 'success',
+          status: STATUS.SUCCESS,
           data: status,
           timestamp: new Date().toISOString()
         });
       } catch (e) {
         resolve({
-          status: 'error',
-          error: 'Invalid antivirus status data',
+          status: STATUS.ERROR,
+          error: 'Ongeldige antivirusstatusgegevens',
           details: e.message,
           timestamp: new Date().toISOString()
         });
@@ -436,23 +588,22 @@ ipcMain.handle('check-antivirus', async () => {
 });
 
 ipcMain.handle('check-updates', async () => {
-  console.log('Starting Windows Update check...');
+  console.log('Windows Update-controle starten...');
   return new Promise((resolve) => {
-    const timeout = 15000; // Verhoogd naar 15 seconden
     let timedOut = false;
     let checkStartTime = Date.now();
 
     const timeoutId = setTimeout(() => {
       timedOut = true;
-      console.error('Windows Update check timed out after', timeout, 'ms');
+      console.error('Windows Update-controle time-out na', SYSTEM_CHECK_TIMEOUT, 'ms');
       resolve({
-        status: 'error',
-        error: 'Windows Update controle duurde te lang',
-        details: 'De controle werd afgebroken na ' + timeout + ' milliseconden',
-        suggestions: ['Controleer de Windows Update service status'],
+        status: STATUS.ERROR,
+        error: 'Windows Update-controle duurde te lang',
+        details: `Controle afgebroken na ${SYSTEM_CHECK_TIMEOUT} milliseconden`,
+        suggesties: ['Controleer de Windows Update-servicestatus'],
         timestamp: new Date().toISOString()
       });
-    }, timeout);
+    }, SYSTEM_CHECK_TIMEOUT);
 
     const script = `
       try {
@@ -482,18 +633,18 @@ ipcMain.handle('check-updates', async () => {
       }
     `;
 
-    exec('powershell.exe -Command "' + script + '"', { timeout: timeout }, (error, stdout, stderr) => {
+    exec('powershell.exe -Command "' + script + '"', { timeout: SYSTEM_CHECK_TIMEOUT }, (error, stdout, stderr) => {
       if (timedOut) return;
       clearTimeout(timeoutId);
 
       if (error) {
         console.error('Windows Update check failed:', error);
         resolve({
-          status: 'error',
+          status: STATUS.ERROR,
           error: 'Kon de Windows Update status niet controleren',
           details: error.message,
           errorCode: error.code || 'UNKNOWN',
-          suggestions: [
+          suggesties: [
             'Controleer of de Windows Update service actief is',
             'Herstart de Windows Update service',
             'Voer de applicatie uit als administrator'
@@ -509,7 +660,7 @@ ipcMain.handle('check-updates', async () => {
         resolve(result);
       } catch (e) {
         resolve({
-          status: 'error',
+          status: STATUS.ERROR,
           error: 'Invalid Windows Update status data',
           details: e.message,
           timestamp: new Date().toISOString()
@@ -520,23 +671,22 @@ ipcMain.handle('check-updates', async () => {
 });
 
 ipcMain.handle('check-firewall', async () => {
-  console.log('Starting firewall check...');
+  console.log('Firewallcontrole starten...');
   return new Promise((resolve) => {
-    const timeout = 15000; // Verhoogd naar 15 seconden
     let timedOut = false;
     let checkStartTime = Date.now();
 
     const timeoutId = setTimeout(() => {
       timedOut = true;
-      console.error('Firewall check timed out after', timeout, 'ms');
+      console.error('Firewallcontrole time-out na', SYSTEM_CHECK_TIMEOUT, 'ms');
       resolve({
-        status: 'error',
-        error: 'Firewall controle duurde te lang',
-        details: 'De controle werd afgebroken na ' + timeout + ' milliseconden',
-        suggestions: ['Controleer de Windows Firewall service status'],
+        status: STATUS.ERROR,
+        error: 'Firewallcontrole duurde te lang',
+        details: `Controle afgebroken na ${SYSTEM_CHECK_TIMEOUT} milliseconden`,
+        suggesties: ['Controleer de Windows Firewall-servicestatus'],
         timestamp: new Date().toISOString()
       });
-    }, timeout);
+    }, SYSTEM_CHECK_TIMEOUT);
 
     const script = `
       try {
@@ -556,18 +706,18 @@ ipcMain.handle('check-firewall', async () => {
       }
     `;
 
-    exec('powershell.exe -Command "' + script + '"', { timeout: timeout }, (error, stdout, stderr) => {
+    exec('powershell.exe -Command "' + script + '"', { timeout: SYSTEM_CHECK_TIMEOUT }, (error, stdout, stderr) => {
       if (timedOut) return;
       clearTimeout(timeoutId);
 
       if (error) {
         console.error('Firewall check failed:', error);
         resolve({
-          status: 'error',
+          status: STATUS.ERROR,
           error: 'Kon de firewall status niet controleren',
           details: error.message,
           errorCode: error.code || 'UNKNOWN',
-          suggestions: [
+          suggesties: [
             'Controleer of de Windows Firewall service actief is',
             'Herstart de Windows Firewall service',
             'Voer de applicatie uit als administrator'
@@ -583,7 +733,7 @@ ipcMain.handle('check-firewall', async () => {
         resolve(result);
       } catch (e) {
         resolve({
-          status: 'error',
+          status: STATUS.ERROR,
           error: 'Invalid firewall status data',
           details: e.message,
           timestamp: new Date().toISOString()
@@ -591,7 +741,7 @@ ipcMain.handle('check-firewall', async () => {
       }
     });
   });
-  });
+});
 
 ipcMain.handle('check-backup-status', async () => {
   console.log('Starting backup check...');
@@ -612,10 +762,10 @@ ipcMain.handle('check-backup-status', async () => {
       timedOut = true;
       console.error('Backup check timed out after', timeout, 'ms');
       resolve({
-        status: 'warning',
+        status: STATUS.WARNING,
         error: 'Back-up controle duurde te lang',
         details: 'De controle werd afgebroken na ' + timeout + ' milliseconden',
-        suggestions: [
+        suggesties: [
           'Controleer of de Windows Backup service actief is',
           'Controleer of er voldoende schijfruimte is',
           'Voer de applicatie uit als administrator'
@@ -665,7 +815,7 @@ ipcMain.handle('check-backup-status', async () => {
         if (completedChecks === commands.length) {
           clearTimeout(timeoutId);
           resolve({
-            status: Object.keys(results).some(k => k.startsWith('warning_')) ? 'partial' : 'completed',
+            status: Object.keys(results).some(k => k.startsWith('warning_')) ? STATUS.PARTIAL : STATUS.COMPLETED,
             data: results,
             timestamp: new Date().toISOString()
           });
@@ -686,10 +836,10 @@ ipcMain.handle('check-encryption-status', async () => {
       timedOut = true;
       console.error('Encryption check timed out after', timeout, 'ms');
       resolve({
-        status: 'error',
+        status: STATUS.ERROR,
         error: 'Encryptie controle duurde te lang',
         details: 'De controle werd afgebroken na ' + timeout + ' milliseconden',
-        suggestions: [
+        suggesties: [
           'Controleer of BitLocker is geïnstalleerd',
           'Controleer of TPM beschikbaar is',
           'Voer de applicatie uit als administrator'
@@ -736,168 +886,4 @@ ipcMain.handle('check-encryption-status', async () => {
           timestamp = [DateTime]::UtcNow.ToString('o')
         } -Compress
       }
-    `;
-
-    exec('powershell.exe -Command "' + script + '"', { timeout: timeout }, (error, stdout, stderr) => {
-      if (timedOut) return;
-      clearTimeout(timeoutId);
-
-      if (error) {
-        console.error('Encryption check failed:', error);
-        resolve({
-          status: 'error',
-          error: 'Could not check encryption status',
-          details: error.message,
-          timestamp: new Date().toISOString()
-        });
-        return;
-      }
-
-      try {
-        const result = JSON.parse(stdout.trim());
-        resolve(result);
-      } catch (e) {
-        resolve({
-          status: 'error',
-          error: 'Invalid encryption status data',
-          details: e.message,
-          timestamp: new Date().toISOString()
-        });
-      }
-    });
-  });
-});
-
-ipcMain.handle('check-network-security', async () => {
-  console.log('Starting network security check...');
-  return new Promise((resolve) => {
-    const timeout = 15000; // Verhoogd naar 15 seconden
-    let timedOut = false;
-    let checkStartTime = Date.now();
-    console.log('Initializing network security check with timeout:', timeout, 'ms');
-
-    const timeoutId = setTimeout(() => {
-      timedOut = true;
-      console.error('Network security check timed out after', timeout, 'ms');
-      resolve({
-        status: 'error',
-        error: 'Netwerk beveiliging controle duurde te lang',
-        details: 'De controle werd afgebroken na ' + timeout + ' milliseconden',
-        suggestions: [
-          'Controleer de netwerkverbinding',
-          'Controleer de Windows Firewall service',
-          'Voer de applicatie uit als administrator'
-        ],
-        data: {
-          available: false,
-          reason: 'timeout'
-        },
-        executionTime: Date.now() - checkStartTime,
-        timestamp: new Date().toISOString()
-      });
-    }, timeout);
-
-    // Simplified network security check
-    const command = 'Get-NetConnectionProfile -ErrorAction SilentlyContinue | Select-Object -Property NetworkCategory,IPv4Connectivity,IPv6Connectivity | ConvertTo-Json';
-    exec('powershell.exe -Command "' + command + '"', { timeout: timeout }, (error, stdout, stderr) => {
-      if (timedOut) return;
-      clearTimeout(timeoutId);
-
-      if (error || !stdout.trim()) {
-        resolve({
-          status: 'completed',
-          warning: 'Netwerk beveiliging kon niet worden gecontroleerd',
-          data: {
-            available: false,
-            reason: error ? 'error' : 'no_data'
-          },
-          timestamp: new Date().toISOString()
-        });
-        return;
-      }
-
-      try {
-        const networkStatus = JSON.parse(stdout);
-        resolve({
-          status: 'completed',
-          data: {
-            available: true,
-            profile: networkStatus
-          },
-          timestamp: new Date().toISOString()
-        });
-      } catch (e) {
-        resolve({
-          status: 'completed',
-          warning: 'Netwerk beveiliging status kon niet worden verwerkt',
-          data: {
-            available: false,
-            reason: 'parse_error'
-          },
-          timestamp: new Date().toISOString()
-        });
-      }
-    });
-  });
-});
-
-// Save system scan results
-ipcMain.handle('save-system-scan', async (event, scanData) => {
-  console.log('Saving system scan results...');
-  return new Promise((resolve, reject) => {
-    const sql = 'INSERT INTO system_scans (antivirus_status, windows_update_status, firewall_status, installed_software, system_info) VALUES (?, ?, ?, ?, ?)';
-    db.run(sql, [scanData.antivirus_status, scanData.windows_update_status, scanData.firewall_status, scanData.installed_software, scanData.system_info], function(err) {
-      if (err) {
-        console.error('Failed to save system scan:', err);
-        reject({
-          error: 'Kon systeemscans niet opslaan',
-          details: err.message,
-          code: err.code,
-          suggestions: [
-            'Controleer de database verbinding',
-            'Controleer of de database niet vergrendeld is',
-            'Controleer de schrijfrechten'
-          ]
-        });
-        return;
-      }
-      console.log('System scan saved successfully with ID:', this.lastID);
-      resolve(this.lastID);
-    });
-  });
-});
-
-// Get assessment results
-ipcMain.handle('get-assessment-results', async (event, assessmentId) => {
-  console.log('Retrieving assessment results for ID:', assessmentId);
-  return new Promise((resolve, reject) => {
-    const sql = `
-      SELECT r.*, q.category, q.question, q.action, q.how_to, q.why
-      FROM responses r
-      JOIN questions q ON r.question_id = q.id
-      WHERE r.assessment_id = ?
-      ORDER BY q.category, q.id
-    `;
-    db.all(sql, [assessmentId], (err, rows) => {
-      if (err) {
-        console.error('Failed to retrieve assessment results:', err);
-        reject({
-          error: 'Kon assessment resultaten niet ophalen',
-          details: err.message,
-          code: err.code,
-          suggestions: [
-            'Controleer of de assessment ID correct is',
-            'Controleer de database verbinding'
-          ]
-        });
-        return;
-      }
-      if (rows.length === 0) {
-        console.warn('No assessment results found for ID:', assessmentId);
-      } else {
-        console.log('Successfully retrieved', rows.length, 'assessment results');
-      }
-      resolve(rows);
-    });
-  });
-});
+    `
