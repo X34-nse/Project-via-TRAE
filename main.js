@@ -3,6 +3,9 @@ const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
 const { exec } = require('child_process');
 const dbLogger = require('./database_logger');
+const { db } = require('./src/database/init');
+const { handleEncryptionCheck } = require('./src/handlers/encryption');
+const { handleNetworkCheck } = require('./src/handlers/network');
 
 let mainWindow;
 let tray;
@@ -95,76 +98,30 @@ const db = new sqlite3.Database(path.join(app.getPath('userData'), 'security_che
     }
 });
 
-// Initialize all required tables
 function initializeTables() {
     db.serialize(() => {
-        try {
-            // Create companies table
-            db.run(`CREATE TABLE IF NOT EXISTS companies (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                industry TEXT,
-                size TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )`);
+        // Create security checks table
+        db.run(`CREATE TABLE IF NOT EXISTS security_checks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            check_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            details TEXT,
+            raw_data TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`);
 
-            // Create questions table
-            db.run(`CREATE TABLE IF NOT EXISTS questions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                category TEXT NOT NULL,
-                subcategory TEXT,
-                question TEXT NOT NULL,
-                action TEXT,
-                how_to TEXT,
-                why TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )`);
+        // Create results table
+        db.run(`CREATE TABLE IF NOT EXISTS scan_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scan_id INTEGER,
+            check_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            data TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(scan_id) REFERENCES security_checks(id)
+        )`);
 
-            // Create security checks table
-            db.run(`CREATE TABLE IF NOT EXISTS security_checks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                check_type TEXT NOT NULL,
-                status TEXT NOT NULL,
-                details TEXT,
-                raw_data TEXT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-            )`);
-
-            // Create scan results table
-            db.run(`CREATE TABLE IF NOT EXISTS scan_results (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                scan_id INTEGER,
-                check_type TEXT NOT NULL,
-                status TEXT NOT NULL,
-                data TEXT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(scan_id) REFERENCES security_checks(id)
-            )`);
-
-            console.log('All database tables initialized successfully');
-        } catch (error) {
-            console.error('Error creating tables:', error);
-        }
-    });
-}
-
-// Function to safely clear and reinitialize tables if needed
-async function resetTables() {
-    return new Promise((resolve, reject) => {
-        db.serialize(() => {
-            try {
-                // Only clear if tables exist
-                db.run("DELETE FROM scan_results WHERE 1=1");
-                db.run("DELETE FROM security_checks WHERE 1=1");
-                db.run("DELETE FROM questions WHERE 1=1");
-                db.run("DELETE FROM companies WHERE 1=1");
-                console.log('Tables cleared successfully');
-                resolve();
-            } catch (error) {
-                console.error('Error clearing tables:', error);
-                reject(error);
-            }
-        });
+        console.log('Database tables initialized');
     });
 }
 
@@ -845,216 +802,20 @@ ipcMain.handle('check-backup-status', async () => {
   });
 });
 
-ipcMain.handle('check-encryption-status', async () => {
-    console.log('Starting encryption check...');
-    return new Promise((resolve) => {
-        const timeout = SYSTEM_CHECK_TIMEOUT;
-        let timedOut = false;
+// Register IPC handlers
+ipcMain.handle('check-encryption-status', handleEncryptionCheck);
+ipcMain.handle('check-network-security', handleNetworkCheck);
 
-        const timeoutId = setTimeout(() => {
-            timedOut = true;
-            console.error('Encryption check timed out after', timeout, 'ms');
-            resolve({
-                status: STATUS.ERROR,
-                error: 'Encryptie controle duurde te lang',
-                details: `Controle afgebroken na ${timeout} milliseconden`,
-                timestamp: new Date().toISOString()
-            });
-        }, timeout);
-
-        const script = `
-            $ErrorActionPreference = 'Stop'
-            try {
-                $results = @{
-                    status = 'success'
-                    data = @{}
-                    timestamp = [DateTime]::UtcNow.ToString('o')
-                }
-
-                $drives = Get-WmiObject -Class Win32_LogicalDisk -Filter "DriveType = 3"
-                
-                foreach ($drive in $drives) {
-                    $driveStatus = @{
-                        label = if ($drive.VolumeName) { $drive.VolumeName } else { 'Unnamed' }
-                        deviceId = $drive.DeviceID
-                        protected = $false
-                        method = 'Unknown'
-                        details = ''
-                    }
-
-                    try {
-                        $fsutil = fsutil fsinfo encryptable $drive.DeviceID 2>&1
-                        if ($fsutil -match 'is encryptable: Yes') {
-                            $driveStatus.method = 'EFS'
-                            $driveStatus.protected = $true
-                        }
-                    } catch {
-                        $driveStatus.details = "Check failed: $($_.Exception.Message)"
-                    }
-
-                    $results.data[$drive.DeviceID] = $driveStatus
-                }
-
-                Write-Output (ConvertTo-Json -InputObject $results -Depth 10 -Compress)
-            } catch {
-                Write-Output (ConvertTo-Json -InputObject @{
-                    status = 'error'
-                    error = 'Encryption check failed'
-                    details = $_.Exception.Message
-                    timestamp = [DateTime]::UtcNow.ToString('o')
-                } -Compress)
-            }
-        `;
-
-        exec('powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "' + script + '"', 
-            { timeout: timeout, encoding: 'utf8' }, 
-            async (error, stdout, stderr) => {
-                if (timedOut) return;
-                clearTimeout(timeoutId);
-
-                console.log('Raw stdout:', stdout);
-
-                if (error) {
-                    const result = {
-                        status: STATUS.ERROR,
-                        error: 'Kon de encryptie status niet controleren',
-                        details: error.message,
-                        timestamp: new Date().toISOString()
-                    };
-                    await saveScanResult('encryption', result);
-                    resolve(result);
-                    return;
-                }
-
-                try {
-                    const cleanOutput = stdout.trim();
-                    if (!cleanOutput) {
-                        throw new Error('Empty response from PowerShell');
-                    }
-
-                    const result = JSON.parse(cleanOutput);
-                    await saveScanResult('encryption', result);
-                    resolve(result);
-                } catch (e) {
-                    const result = {
-                        status: STATUS.ERROR,
-                        error: 'Ongeldige encryptie status data',
-                        details: e.message,
-                        timestamp: new Date().toISOString()
-                    };
-                    await saveScanResult('encryption', result);
-                    resolve(result);
-                }
-            }
-        );
+// Clean up on exit
+app.on('window-all-closed', () => {
+    db.close((err) => {
+        if (err) {
+            console.error('Error closing database:', err);
+        }
     });
-});
-
-ipcMain.handle('check-network-security', async () => {
-    console.log('Starting network security check...');
-    return new Promise((resolve) => {
-        const timeout = SYSTEM_CHECK_TIMEOUT;
-        let timedOut = false;
-
-        const timeoutId = setTimeout(() => {
-            timedOut = true;
-            const result = {
-                status: STATUS.ERROR,
-                error: 'Netwerkbeveiliging controle duurde te lang',
-                details: `Controle afgebroken na ${timeout} milliseconden`,
-                timestamp: new Date().toISOString()
-            };
-            saveScanResult('network', result);
-            resolve(result);
-        }, timeout);
-
-        const script = `
-            try {
-                $ErrorActionPreference = 'Stop'
-                $results = @{
-                    status = 'success'
-                    data = @{
-                        networkAdapters = @()
-                        dnsServers = @()
-                        connections = @()
-                    }
-                    timestamp = [DateTime]::UtcNow.ToString('o')
-                }
-
-                # Get network adapters
-                Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | ForEach-Object {
-                    $adapter = @{
-                        name = $_.Name
-                        description = $_.InterfaceDescription
-                        status = $_.Status
-                        speed = $_.LinkSpeed
-                    }
-                    $results.data.networkAdapters += $adapter
-                }
-
-                # Get DNS servers
-                Get-DnsClientServerAddress | Where-Object { $_.AddressFamily -eq 2 } | ForEach-Object {
-                    $results.data.dnsServers += $_.ServerAddresses
-                }
-
-                # Get active connections
-                Get-NetTCPConnection -State Established | Select-Object -First 10 | ForEach-Object {
-                    $connection = @{
-                        localAddress = $_.LocalAddress
-                        localPort = $_.LocalPort
-                        remoteAddress = $_.RemoteAddress
-                        remotePort = $_.RemotePort
-                        state = $_.State
-                    }
-                    $results.data.connections += $connection
-                }
-
-                ConvertTo-Json -InputObject $results -Depth 10 -Compress
-            } catch {
-                ConvertTo-Json -InputObject @{
-                    status = 'error'
-                    error = 'Network check failed'
-                    details = $_.Exception.Message -replace '[^\w\s\-\.]', ''
-                    timestamp = [DateTime]::UtcNow.ToString('o')
-                } -Compress
-            }
-        `;
-
-        exec('powershell.exe -NoProfile -NonInteractive -Command "' + script + '"', 
-            { timeout: timeout, encoding: 'utf8' }, 
-            async (error, stdout, stderr) => {
-                if (timedOut) return;
-                clearTimeout(timeoutId);
-
-                if (error) {
-                    const result = {
-                        status: STATUS.ERROR,
-                        error: 'Kon de netwerkbeveiliging niet controleren',
-                        details: error.message,
-                        timestamp: new Date().toISOString()
-                    };
-                    await saveScanResult('network', result);
-                    resolve(result);
-                    return;
-                }
-
-                try {
-                    const result = JSON.parse(stdout.trim());
-                    await saveScanResult('network', result);
-                    resolve(result);
-                } catch (e) {
-                    const result = {
-                        status: STATUS.ERROR,
-                        error: 'Ongeldige netwerkbeveiliging data',
-                        details: e.message,
-                        timestamp: new Date().toISOString()
-                    };
-                    await saveScanResult('network', result);
-                    resolve(result);
-                }
-            }
-        );
-    });
+    if (process.platform !== 'darwin') {
+        app.quit();
+    }
 });
 
 module.exports = app;
