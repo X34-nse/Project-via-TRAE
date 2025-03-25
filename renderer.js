@@ -251,43 +251,40 @@ async function loadSecurityTest() {
                 ipcRenderer.invoke('check-network-security')
             ]);
 
-            const [antivirus, updates, firewall, backup, encryption, network] = scanResults;
-
-            securityTestResults.innerHTML = `
-                <div class="card mb-3">
-                    <div class="card-body">
-                        <h5 class="card-title">Beveiligingstest Resultaten</h5>
-                        <div class="mt-3">
-                            <h6>Antivirus Status</h6>
-                            <p>${JSON.stringify(antivirus.data, null, 2)}</p>
-                            
-                            <h6>Windows Updates</h6>
-                            <p>${JSON.stringify(updates.data, null, 2)}</p>
-                            
-                            <h6>Firewall Status</h6>
-                            <p>${JSON.stringify(firewall.data, null, 2)}</p>
-                            
-                            <h6>Backup Status</h6>
-                            <p>${JSON.stringify(backup.data, null, 2)}</p>
-                            
-                            <h6>Encryptie Status</h6>
-                            <p>${JSON.stringify(encryption.data, null, 2)}</p>
-                            
-                            <h6>Netwerk Beveiliging</h6>
-                            <p>${JSON.stringify(network.data, null, 2)}</p>
-                        </div>
+            // Process and display results
+            let resultsHtml = '<div class="scan-results">';
+            scanResults.forEach((result, index) => {
+                const scanTypes = ['Antivirus', 'Windows Updates', 'Firewall', 'Backup', 'Encryptie', 'Netwerk'];
+                const statusClass = result.status === 'success' ? 'success' : 'warning';
+                
+                resultsHtml += `
+                    <div class="alert alert-${statusClass} mb-2">
+                        <h5>${scanTypes[index]}</h5>
+                        <p>Status: ${result.status}</p>
+                        ${result.error ? `<p>Details: ${result.error}</p>` : ''}
                     </div>
-                </div>
-            `;
+                `;
+            });
+            resultsHtml += '</div>';
+            
+            securityTestResults.innerHTML = resultsHtml;
+
         } catch (error) {
+            console.error('Scan error:', error);
             securityTestResults.innerHTML = `
                 <div class="alert alert-danger">
-                    Er is een fout opgetreden tijdens de beveiligingstest: ${error.message}
+                    <h5>Er is een fout opgetreden</h5>
+                    <p>${error.message}</p>
                 </div>
             `;
         }
     });
 }
+
+// Initialize when page loads
+document.addEventListener('DOMContentLoaded', () => {
+    loadSecurityTest();
+});
 
 async function startAssessment(companyId) {
     const mainContent = document.querySelector('.main-content');

@@ -3,9 +3,11 @@ const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
 const { exec } = require('child_process');
 const dbLogger = require('./database_logger');
-const { db } = require('./src/database/init');
+const { initializeDatabase, getDatabase } = require('./src/database/init');
 const { handleEncryptionCheck } = require('./src/handlers/encryption');
 const { handleNetworkCheck } = require('./src/handlers/network');
+const { runDiagnostics } = require('./src/diagnostics/runDiagnostics');
+const { STATUS } = require('./src/constants');
 
 let mainWindow;
 let tray;
@@ -13,13 +15,6 @@ let tray;
 // Add these constants at the top of the file, after the require statements
 const SYSTEM_CHECK_TIMEOUT = 30000; // 30 seconds
 const DB_OPERATION_TIMEOUT = 10000; // 10 seconds timeout for database operations
-const STATUS = {
-    SUCCESS: 'success',
-    ERROR: 'error',
-    WARNING: 'warning',
-    PARTIAL: 'partial',
-    COMPLETED: 'completed'
-};
 
 // Standard error responses
 const ERROR_RESPONSES = {
@@ -74,7 +69,10 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+    initializeDatabase();
+    createWindow();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
@@ -808,14 +806,23 @@ ipcMain.handle('check-network-security', handleNetworkCheck);
 
 // Clean up on exit
 app.on('window-all-closed', () => {
-    db.close((err) => {
-        if (err) {
-            console.error('Error closing database:', err);
-        }
-    });
+    const db = getDatabase();
+    if (db) {
+        db.close((err) => {
+            if (err) {
+                console.error('Error closing database:', err);
+            }
+        });
+    }
+    
     if (process.platform !== 'darwin') {
         app.quit();
     }
+});
+
+// Add this IPC handler
+ipcMain.handle('run-diagnostics', async () => {
+    return await runDiagnostics();
 });
 
 module.exports = app;

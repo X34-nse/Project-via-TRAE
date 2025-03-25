@@ -1,7 +1,9 @@
-const { db } = require('./init');
+const { getDatabase } = require('./init');
+const { withLogging } = require('../utils/logger');
 
-function saveScanResult(checkType, result) {
+const saveScanResult = withLogging(async function saveScanResult(checkType, result) {
     return new Promise((resolve, reject) => {
+        const db = getDatabase();
         const query = `INSERT INTO scan_results (check_type, status, data, timestamp) 
                       VALUES (?, ?, ?, datetime('now'))`;
         
@@ -19,6 +21,6 @@ function saveScanResult(checkType, result) {
             }
         });
     });
-}
+});
 
 module.exports = { saveScanResult }; 
