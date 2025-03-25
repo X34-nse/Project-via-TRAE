@@ -7,8 +7,10 @@ let mainWindow;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: 1600,
+    height: 1000,
+    minWidth: 1200,
+    minHeight: 800,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
@@ -288,7 +290,7 @@ ipcMain.handle('check-antivirus', async () => {
 ipcMain.handle('check-updates', async () => {
   console.log('Starting Windows Update check...');
   return new Promise((resolve) => {
-    const timeout = 10000; // 10 seconden timeout
+    const timeout = 10000; // 10 second timeout
     let timedOut = false;
 
     const timeoutId = setTimeout(() => {
@@ -307,11 +309,39 @@ ipcMain.handle('check-updates', async () => {
 
       if (error) {
         console.error('Windows Update check failed:', error);
-        resolve({
-          status: 'error',
-          error: 'Could not check Windows Update status',
-          details: error.message,
-          timestamp: new Date().toISOString()
+
+        // Fallback command in case the first one fails
+        const fallbackCommand = 'Get-WUHistory | Select-Object -First 1 | ConvertTo-Json';
+        exec('powershell.exe -Command "' + fallbackCommand + '"', { timeout: timeout }, (fallbackError, fallbackStdout, fallbackStderr) => {
+          if (timedOut) return;
+
+          if (fallbackError) {
+            console.error('Fallback Windows Update check failed:', fallbackError);
+            resolve({
+              status: 'error',
+              error: 'Could not check Windows Update status',
+              details: 'Both primary and fallback checks failed. Please verify Windows Update service is running.',
+              timestamp: new Date().toISOString()
+            });
+            return;
+          }
+
+          try {
+            const status = JSON.parse(fallbackStdout);
+            resolve({
+              status: 'success',
+              data: status,
+              source: 'fallback',
+              timestamp: new Date().toISOString()
+            });
+          } catch (e) {
+            resolve({
+              status: 'error',
+              error: 'Invalid Windows Update status data',
+              details: e.message,
+              timestamp: new Date().toISOString()
+            });
+          }
         });
         return;
       }
@@ -321,6 +351,7 @@ ipcMain.handle('check-updates', async () => {
         resolve({
           status: 'success',
           data: status,
+          source: 'primary',
           timestamp: new Date().toISOString()
         });
       } catch (e) {

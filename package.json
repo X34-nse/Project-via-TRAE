@@ -6,10 +6,11 @@
   "scripts": {
     "start": "electron .",
     "test": "echo \"Error: no test specified\" && exit 1",
+    "prebuild": "node -e \"const pkg=require('./package.json'); const fs=require('fs'); const version=pkg.version.split('.'); version[2]=parseInt(version[2])+1; pkg.version=version.join('.'); fs.writeFileSync('./package.json', JSON.stringify(pkg, null, 2))\"",
     "build": "electron-builder build",
     "postinstall": "electron-builder install-app-deps"
   },
-  "author": "",
+  "author": "Security Assessment System Team",
   "license": "ISC",
   "dependencies": {
     "sqlite3": "^5.1.6"
@@ -34,13 +35,22 @@
           "assets/**/*",
           "database/**/*",
           "config/**/*",
+          "styles/**/*",
+          "src/renderer/**/*.html",
+          "src/renderer/**/*.css",
           "!**/*.{js,json}",
-          "!node_modules/**/*",
-          "!src/**/*",
           "!build/**/*",
           "!dist/**/*",
           "!test/**/*"
         ]
+      },
+      {
+        "from": "node_modules/bootstrap/dist",
+        "to": "resources/bootstrap"
+      },
+      {
+        "from": "node_modules/chart.js/dist",
+        "to": "resources/chart.js"
       }
     ],
     "files": [
@@ -71,11 +81,10 @@
       "runAfterFinish": true,
       "warningsAsErrors": false,
       "deleteAppDataOnUninstall": true,
-      "displayUninstallProgress": true,
       "include": "installer.nsh",
       "menuCategory": true,
       "shortcutName": "Security Assessment System",
-      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     }
   }
 }
