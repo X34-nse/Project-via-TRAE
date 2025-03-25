@@ -31,8 +31,15 @@
         "from": "./",
         "to": "./",
         "filter": [
-          "**/*",
-          "!node_modules"
+          "assets/**/*",
+          "database/**/*",
+          "config/**/*",
+          "!**/*.{js,json}",
+          "!node_modules/**/*",
+          "!src/**/*",
+          "!build/**/*",
+          "!dist/**/*",
+          "!test/**/*"
         ]
       }
     ],
@@ -62,7 +69,13 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "runAfterFinish": true,
-      "warningsAsErrors": false
+      "warningsAsErrors": false,
+      "deleteAppDataOnUninstall": true,
+      "displayUninstallProgress": true,
+      "include": "installer.nsh",
+      "menuCategory": true,
+      "shortcutName": "Security Assessment System",
+      "artifactName": "${productName}-Setup-${version}.${ext}",
     }
   }
 }
