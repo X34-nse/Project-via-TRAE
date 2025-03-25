@@ -37,10 +37,30 @@ function showSection(sectionId) {
 
 // Dashboard functionality
 async function loadDashboard() {
-    const companies = await ipcRenderer.invoke('get-companies');
-    updateRiskChart();
-    loadRecentAssessments();
-    loadSecurityStatus();
+    try {
+        const companies = await ipcRenderer.invoke('get-companies');
+        updateRiskChart();
+        loadRecentAssessments();
+        loadSecurityStatus();
+        
+        // Voeg event listener toe voor refresh knop
+        const refreshBtn = document.getElementById('refresh-dashboard');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', async () => {
+                refreshBtn.disabled = true;
+                refreshBtn.innerHTML = '<i class="fas fa-sync-alt fa-spin"></i> Verversen...';
+                
+                try {
+                    await loadDashboard();
+                } finally {
+                    refreshBtn.disabled = false;
+                    refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Ververs';
+                }
+            });
+        }
+    } catch (error) {
+        console.error('Error loading dashboard:', error);
+    }
 }
 
 async function loadSecurityStatus() {
@@ -343,6 +363,12 @@ async function startAssessment(companyId) {
         });
 
         assessmentData.systemScanResults = scanResults;
+
+        // Save scan results to database
+        await ipcRenderer.invoke('save-scan-results', {
+            assessmentId: assessmentData.companyId,
+            scanResults: scanResults
+        });
 
         // Update progress display with more detailed status information
         let statusHtml = '';

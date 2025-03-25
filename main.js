@@ -119,6 +119,9 @@ function initializeTables() {
     status TEXT NOT NULL,
     details TEXT,
     raw_data TEXT,
+    error_message TEXT,
+    retry_count INTEGER DEFAULT 0,
+    last_success_date DATETIME,
     FOREIGN KEY (assessment_id) REFERENCES assessments (id)
   )`);  
 
@@ -135,6 +138,78 @@ function initializeTables() {
 }
 
 // IPC handlers for database operations
+
+// Handler for saving scan results
+ipcMain.handle('save-scan-results', async (event, { assessmentId, scanResults }) => {
+  return new Promise((resolve, reject) => {
+    db.serialize(() => {
+      db.run('BEGIN TRANSACTION');
+
+      try {
+        const stmt = db.prepare(
+          'INSERT INTO scan_results (assessment_id, scan_type, status, details, raw_data, error_message, retry_count, last_success_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        );
+
+        scanResults.forEach(result => {
+          const lastSuccessDate = result.status === 'success' ? new Date().toISOString() : null;
+          const retryCount = result.retryCount || 0;
+
+          stmt.run(
+            assessmentId,
+            result.name,
+            result.status,
+            result.details || null,
+            JSON.stringify(result.result || {}),
+            result.error || null,
+            retryCount,
+            lastSuccessDate,
+            (err) => {
+              if (err) {
+                console.error('Error saving scan result:', err);
+                db.run('ROLLBACK');
+                reject(err);
+                return;
+              }
+            }
+          );
+
+          // Als de scan succesvol is, voeg een history record toe
+          if (result.status === 'success' || result.status === 'error') {
+            const historyStmt = db.prepare(
+              'INSERT INTO scan_history (scan_result_id, previous_status, current_status, change_details) VALUES (?, ?, ?, ?)'
+            );
+            
+            historyStmt.run(
+              this.lastID,
+              result.previousStatus || null,
+              result.status,
+              JSON.stringify({
+                timestamp: new Date().toISOString(),
+                details: result.details || null,
+                error: result.error || null
+              }),
+              (historyErr) => {
+                if (historyErr) {
+                  console.error('Error saving scan history:', historyErr);
+                }
+              }
+            );
+            historyStmt.finalize();
+          }
+        });
+
+        stmt.finalize();
+        db.run('COMMIT');
+        resolve();
+      } catch (error) {
+        console.error('Error in save-scan-results:', error);
+        db.run('ROLLBACK');
+        reject(error);
+      }
+    });
+  });
+});
+
 ipcMain.handle('create-company', async (event, companyData) => {
   return new Promise((resolve, reject) => {
     const sql = 'INSERT INTO companies (name, industry, size) VALUES (?, ?, ?)';
