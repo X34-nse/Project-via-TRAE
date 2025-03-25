@@ -615,11 +615,112 @@ async function showAssessmentResults(assessmentData) {
 
     // Update dashboard met nieuwe resultaten
     loadDashboard();
-
-
-    // Update dashboard met nieuwe resultaten
-    loadDashboard();
 }
 
 // Initial load
 loadDashboard();
+
+async function startQuestionnaire() {
+    const mainContent = document.querySelector('.main-content');
+    const sections = document.querySelectorAll('.section');
+    sections.forEach(section => section.classList.add('d-none'));
+
+    const questionnaireSection = document.createElement('div');
+    questionnaireSection.className = 'section active';
+    questionnaireSection.id = 'questionnaire-section';
+
+    // Create progress indicator
+    const progress = document.createElement('div');
+    progress.className = 'progress mb-4';
+    progress.innerHTML = `
+        <div class="progress-bar" role="progressbar" style="width: 0%"></div>
+    `;
+
+    // Create questionnaire container
+    const container = document.createElement('div');
+    container.className = 'questionnaire-container';
+
+    questionnaireSection.appendChild(progress);
+    questionnaireSection.appendChild(container);
+    mainContent.appendChild(questionnaireSection);
+
+    // Load questions and start questionnaire
+    const questions = await ipcRenderer.invoke('get-questions');
+    let currentCategoryIndex = 0;
+    let answers = [];
+
+    function renderCurrentCategory() {
+        const category = questions[currentCategoryIndex];
+        container.innerHTML = `
+            <h3 class="mb-4">${category.category}</h3>
+            <form id="category-form">
+                ${category.questions.map(q => `
+                    <div class="mb-4">
+                        <label class="form-label">${q.question}</label>
+                        ${renderQuestionInput(q)}
+                        ${q.why ? `<small class="text-muted d-block mt-1">${q.why}</small>` : ''}
+                    </div>
+                `).join('')}
+                <div class="d-flex justify-content-between mt-4">
+                    ${currentCategoryIndex > 0 ? 
+                        `<button type="button" class="btn btn-secondary" id="prev-btn">Vorige</button>` : 
+                        `<div></div>`}
+                    <button type="button" class="btn btn-primary" id="next-btn">
+                        ${currentCategoryIndex === questions.length - 1 ? 'Afronden' : 'Volgende'}
+                    </button>
+                </div>
+            </form>
+        `;
+
+        // Update progress bar
+        const progressPercentage = ((currentCategoryIndex + 1) / questions.length) * 100;
+        progress.querySelector('.progress-bar').style.width = `${progressPercentage}%`;
+
+        // Add event listeners
+        document.getElementById('next-btn').addEventListener('click', handleNext);
+        if (currentCategoryIndex > 0) {
+            document.getElementById('prev-btn').addEventListener('click', handlePrev);
+        }
+    }
+
+    function renderQuestionInput(question) {
+        switch (question.type) {
+            case 'boolean':
+                return `
+                    <div class="btn-group" role="group">
+                        <input type="radio" class="btn-check" name="${question.id}" value="true" id="${question.id}_yes">
+                        <label class="btn btn-outline-success" for="${question.id}_yes">Ja</label>
+                        <input type="radio" class="btn-check" name="${question.id}" value="false" id="${question.id}_no">
+                        <label class="btn btn-outline-danger" for="${question.id}_no">Nee</label>
+                    </div>
+                `;
+            case 'select':
+                return `
+                    <select class="form-select" name="${question.id}" required>
+                        <option value="">Maak een keuze</option>
+                        ${question.options.map(opt => 
+                            `<option value="${opt.value}">${opt.label}</option>`
+                        ).join('')}
+                    </select>
+                `;
+            default:
+                return `<input type="text" class="form-control" name="${question.id}" required>`;
+        }
+    }
+
+    // Start with first category
+    renderCurrentCategory();
+}
+
+// Add event listener for starting questionnaire
+document.getElementById('startQuestionnaireBtn').addEventListener('click', startQuestionnaire);
+
+async function viewLogs() {
+  try {
+    const logs = await ipcRenderer.invoke('get-security-check-logs');
+    console.log('Security check logs:', logs);
+    // Add your UI logic to display the logs
+  } catch (error) {
+    console.error('Failed to retrieve logs:', error);
+  }
+}

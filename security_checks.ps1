@@ -99,25 +99,42 @@ function Get-FirewallStatus {
     }
 }
 
-# Check Backup Status
+# Check Backup Status with Timeout Protection
 function Get-BackupStatus {
-    Write-SecurityLog -Component "Backup" -Message "Checking backup systems status" -Status "Info"
+    Write-SecurityLog -Component "Backup" -Message "Starting backup systems status check" -Status "Info"
     $results = @{}
+    $timeout = 10 # Timeout in seconds
     
-    # Check Volume Shadow Copy Service status
-    try {
-        $vss = Get-Service -Name VSS -ErrorAction Stop
-        Write-SecurityLog -Component "Backup" -Message "VSS Service Status: $($vss.Status)" -Status "Info"
-        $results.vss_status = @{
-            status = $vss.Status
-            startType = $vss.StartType
-        }
-    } catch {
-        $results.vss_status = @{
-            status = 'unknown'
-            error = $_.Exception.Message
+    # Check Volume Shadow Copy Service status with timeout
+    $job = Start-Job -ScriptBlock {
+        try {
+            $vss = Get-Service -Name VSS -ErrorAction Stop
+            @{
+                status = $vss.Status
+                startType = $vss.StartType
+                error = $null
+            }
+        } catch {
+            @{
+                status = 'unknown'
+                error = $_.Exception.Message
+            }
         }
     }
+    
+    $completed = Wait-Job $job -Timeout $timeout
+    if ($completed) {
+        $results.vss_status = Receive-Job -Job $job
+        Write-SecurityLog -Component "Backup" -Message "VSS Service Status: $($results.vss_status.status)" -Status "Info"
+    } else {
+        Stop-Job $job
+        $results.vss_status = @{
+            status = 'timeout'
+            error = "Operation timed out after $timeout seconds"
+        }
+        Write-SecurityLog -Component "Backup" -Message "VSS check timed out" -Status "Warning"
+    }
+    Remove-Job $job -Force
 
     # Check System Restore status using registry
     try {

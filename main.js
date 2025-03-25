@@ -8,14 +8,14 @@ let mainWindow;
 let tray;
 
 // Add these constants at the top of the file, after the require statements
-const SYSTEM_CHECK_TIMEOUT = 15000; // 15 seconds timeout for system checks
+const SYSTEM_CHECK_TIMEOUT = 30000; // 30 seconds
 const DB_OPERATION_TIMEOUT = 10000; // 10 seconds timeout for database operations
 const STATUS = {
-    SUCCESS: 'succes',
-    ERROR: 'fout',
-    WARNING: 'waarschuwing',
-    PARTIAL: 'gedeeltelijk',
-    COMPLETED: 'voltooid'
+    SUCCESS: 'success',
+    ERROR: 'error',
+    WARNING: 'warning',
+    PARTIAL: 'partial',
+    COMPLETED: 'completed'
 };
 
 // Standard error responses
@@ -85,126 +85,109 @@ app.on('activate', () => {
   }
 });
 
-// Database initialization
-const db = new sqlite3.Database('security_assessment.db', (err) => {
-  if (err) {
-    console.error('Database connection error:', err);
-  } else {
-    console.log('Connected to the SQLite database');
-    initializeTables();
-  }
+// Initialize database
+const db = new sqlite3.Database(path.join(app.getPath('userData'), 'security_checks.db'), (err) => {
+    if (err) {
+        console.error('Database initialization error:', err);
+    } else {
+        console.log('Connected to the security checks database');
+        initializeTables();
+    }
 });
 
+// Initialize all required tables
 function initializeTables() {
-  return new Promise((resolve, reject) => {
     db.serialize(() => {
-      try {
-        // Companies table
-        db.run(`CREATE TABLE IF NOT EXISTS companies (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          name TEXT NOT NULL,
-          industry TEXT,
-          size TEXT,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )`);
-
-        // Questions table for security assessment
-        db.run(`CREATE TABLE IF NOT EXISTS questions (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          category TEXT NOT NULL,
-          subcategory TEXT NOT NULL,
-          question TEXT NOT NULL,
-          action TEXT,
-          how_to TEXT,
-          why TEXT
-        )`);
-
-        // Assessments table
-        db.run(`CREATE TABLE IF NOT EXISTS assessments (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          company_id INTEGER,
-          assessment_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-          risk_score FLOAT,
-          FOREIGN KEY (company_id) REFERENCES companies (id)
-        )`);
-
-        // Security Status table
-        db.run(`CREATE TABLE IF NOT EXISTS security_status (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-          antivirus_status TEXT,
-          antivirus_message TEXT,
-          updates_status TEXT,
-          updates_message TEXT,
-          firewall_status TEXT,
-          firewall_message TEXT,
-          backup_status TEXT,
-          backup_message TEXT,
-          encryption_status TEXT,
-          encryption_message TEXT,
-          network_status TEXT,
-          network_message TEXT
-        )`);
-
-        // Responses table
-        db.run(`CREATE TABLE IF NOT EXISTS responses (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          assessment_id INTEGER,
-          question_id INTEGER,
-          response TEXT,
-          notes TEXT,
-          FOREIGN KEY (assessment_id) REFERENCES assessments (id),
-          FOREIGN KEY (question_id) REFERENCES questions (id)
-        )`);
-
-        // Scan Results table for storing detailed scan data
-        db.run(`CREATE TABLE IF NOT EXISTS scan_results (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          assessment_id INTEGER,
-          scan_type TEXT NOT NULL,
-          scan_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-          status TEXT NOT NULL,
-          details TEXT,
-          raw_data TEXT,
-          error_message TEXT,
-          retry_count INTEGER DEFAULT 0,
-          last_success_date DATETIME,
-          FOREIGN KEY (assessment_id) REFERENCES assessments (id)
-        )`);  
-
-        // Scan History table for trend analysis
-        db.run(`CREATE TABLE IF NOT EXISTS scan_history (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          scan_result_id INTEGER,
-          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-          previous_status TEXT,
-          current_status TEXT,
-          change_details TEXT,
-          FOREIGN KEY (scan_result_id) REFERENCES scan_results (id)
-        )`);
-
-        // System scans table
-        db.run(`
-            CREATE TABLE IF NOT EXISTS system_scans (
+        try {
+            // Create companies table
+            db.run(`CREATE TABLE IF NOT EXISTS companies (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                antivirus_status TEXT,
-                windows_update_status TEXT,
-                firewall_status TEXT,
-                backup_status TEXT,
-                encryption_status TEXT,
-                network_status TEXT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        `);
+                name TEXT NOT NULL,
+                industry TEXT,
+                size TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`);
 
-        dbLogger.info('DATABASE_INIT', 'Tables initialized successfully');
-        resolve();
-      } catch (error) {
-        dbLogger.error('DATABASE_INIT_ERROR', error);
-        reject(error);
-      }
+            // Create questions table
+            db.run(`CREATE TABLE IF NOT EXISTS questions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category TEXT NOT NULL,
+                subcategory TEXT,
+                question TEXT NOT NULL,
+                action TEXT,
+                how_to TEXT,
+                why TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`);
+
+            // Create security checks table
+            db.run(`CREATE TABLE IF NOT EXISTS security_checks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                check_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                details TEXT,
+                raw_data TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`);
+
+            // Create scan results table
+            db.run(`CREATE TABLE IF NOT EXISTS scan_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scan_id INTEGER,
+                check_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                data TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(scan_id) REFERENCES security_checks(id)
+            )`);
+
+            console.log('All database tables initialized successfully');
+        } catch (error) {
+            console.error('Error creating tables:', error);
+        }
     });
-  });
+}
+
+// Function to safely clear and reinitialize tables if needed
+async function resetTables() {
+    return new Promise((resolve, reject) => {
+        db.serialize(() => {
+            try {
+                // Only clear if tables exist
+                db.run("DELETE FROM scan_results WHERE 1=1");
+                db.run("DELETE FROM security_checks WHERE 1=1");
+                db.run("DELETE FROM questions WHERE 1=1");
+                db.run("DELETE FROM companies WHERE 1=1");
+                console.log('Tables cleared successfully');
+                resolve();
+            } catch (error) {
+                console.error('Error clearing tables:', error);
+                reject(error);
+            }
+        });
+    });
+}
+
+// Save scan results
+function saveScanResult(checkType, result) {
+    return new Promise((resolve, reject) => {
+        const query = `INSERT INTO scan_results (check_type, status, data, timestamp) 
+                      VALUES (?, ?, ?, datetime('now'))`;
+        
+        db.run(query, [
+            checkType,
+            result.status,
+            JSON.stringify(result)
+        ], function(err) {
+            if (err) {
+                console.error('Error saving scan result:', err);
+                reject(err);
+            } else {
+                console.log(`Saved ${checkType} scan result with id ${this.lastID}`);
+                resolve(this.lastID);
+            }
+        });
+    });
 }
 
 // IPC handlers for database operations
@@ -228,31 +211,16 @@ ipcMain.handle('save-scan-results', async (event, { assessmentId, scanResults })
       try {
         const stmt = db.prepare(`
           INSERT INTO scan_results (
-            assessment_id, scan_type, status, details, 
-            raw_data, error_message, retry_count, last_success_date
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            scan_id, check_type, status, data
+          ) VALUES (?, ?, ?, ?)
         `);
 
         scanResults.forEach(result => {
-          const lastSuccessDate = result.status === STATUS.SUCCESS ? new Date().toISOString() : null;
-          const retryCount = result.retryCount || 0;
-
           stmt.run(
             assessmentId,
             result.name,
             result.status,
-            result.details || null,
-            JSON.stringify(result.result || {}),
-            result.error || null,
-            retryCount,
-            lastSuccessDate,
-            (err) => {
-              if (err) {
-                dbLogger.queryError('INSERT scan_results', { assessmentId, result }, err);
-                throw err;
-              }
-              dbLogger.query('INSERT scan_results', { assessmentId, result });
-            }
+            JSON.stringify(result.result || {})
           );
         });
 
@@ -452,25 +420,77 @@ function formatFirewallStatus(data) {
 
 // ... Add similar formatters for backup, encryption, and network ...
 
-// Load questions from questions.js
-const securityQuestions = require('./questions.js');
+// Import the questions
+const { securityQuestions } = require('./questions.js');
 
-// Initialize questions in database
+// Initialize questions after tables are created
 function initializeQuestions() {
-  const insertQuestion = 'INSERT OR IGNORE INTO questions (category, subcategory, question, action, how_to, why) VALUES (?, ?, ?, ?, ?, ?)';
-  securityQuestions.forEach(q => {
-    db.run(insertQuestion, [q.category, q.subcategory, q.question, q.action, q.howTo, q.why], (err) => {
-      if (err) {
-        console.error('Error inserting question:', err);
-      }
+  return new Promise((resolve, reject) => {
+    if (!Array.isArray(securityQuestions)) {
+      console.error('Security questions is not an array:', securityQuestions);
+      reject(new Error('Security questions data is invalid'));
+      return;
+    }
+
+    db.serialize(() => {
+      // First clear existing questions
+      db.run('DELETE FROM questions', [], (err) => {
+        if (err) {
+          console.error('Error clearing questions:', err);
+          reject(err);
+          return;
+        }
+
+        // Prepare the insert statement
+        const stmt = db.prepare('INSERT INTO questions (category, subcategory, question, action, how_to, why) VALUES (?, ?, ?, ?, ?, ?)');
+
+        try {
+          // Insert each question
+          securityQuestions.forEach(category => {
+            if (Array.isArray(category.questions)) {
+              category.questions.forEach(q => {
+                stmt.run([
+                  category.category,
+                  q.subcategory || '',
+                  q.question,
+                  q.action || '',
+                  q.howTo || '',
+                  q.why || ''
+                ], (err) => {
+                  if (err) console.error('Error inserting question:', err);
+                });
+              });
+            }
+          });
+
+          stmt.finalize((err) => {
+            if (err) {
+              console.error('Error finalizing statement:', err);
+              reject(err);
+            } else {
+              console.log('Questions initialized successfully');
+              resolve();
+            }
+          });
+        } catch (error) {
+          console.error('Error in questions initialization:', error);
+          stmt.finalize();
+          reject(error);
+        }
+      });
     });
   });
 }
 
-// Initialize questions after tables are created
-db.serialize(() => {
-  initializeTables();
-  initializeQuestions();
+// Initialize database and questions
+db.serialize(async () => {
+  try {
+    await initializeTables();
+    await initializeQuestions();
+    console.log('Database initialization completed successfully');
+  } catch (error) {
+    console.error('Database initialization failed:', error);
+  }
 });
 
 // Get all questions
@@ -826,64 +846,215 @@ ipcMain.handle('check-backup-status', async () => {
 });
 
 ipcMain.handle('check-encryption-status', async () => {
-  console.log('Starting encryption check...');
-  return new Promise((resolve) => {
-    const timeout = 15000; // Verhoogd naar 15 seconden
-    let timedOut = false;
-    let checkStartTime = Date.now();
+    console.log('Starting encryption check...');
+    return new Promise((resolve) => {
+        const timeout = SYSTEM_CHECK_TIMEOUT;
+        let timedOut = false;
 
-    const timeoutId = setTimeout(() => {
-      timedOut = true;
-      console.error('Encryption check timed out after', timeout, 'ms');
-      resolve({
-        status: STATUS.ERROR,
-        error: 'Encryptie controle duurde te lang',
-        details: 'De controle werd afgebroken na ' + timeout + ' milliseconden',
-        suggesties: [
-          'Controleer of BitLocker is geïnstalleerd',
-          'Controleer of TPM beschikbaar is',
-          'Voer de applicatie uit als administrator'
-        ],
-        executionTime: Date.now() - checkStartTime,
-        timestamp: new Date().toISOString()
-      });
-    }, timeout);
+        const timeoutId = setTimeout(() => {
+            timedOut = true;
+            console.error('Encryption check timed out after', timeout, 'ms');
+            resolve({
+                status: STATUS.ERROR,
+                error: 'Encryptie controle duurde te lang',
+                details: `Controle afgebroken na ${timeout} milliseconden`,
+                timestamp: new Date().toISOString()
+            });
+        }, timeout);
 
-    const script = `
-      try {
-        $volumes = Get-CimInstance -ClassName Win32_Volume -ErrorAction Stop |
-          Where-Object { $_.DriveLetter -ne $null } |
-          Select-Object DriveLetter, Label
+        const script = `
+            $ErrorActionPreference = 'Stop'
+            try {
+                $results = @{
+                    status = 'success'
+                    data = @{}
+                    timestamp = [DateTime]::UtcNow.ToString('o')
+                }
 
-        $encryptionStatus = @{}
-        foreach ($volume in $volumes) {
-          try {
-            $bitlockerStatus = Get-BitLockerVolume -MountPoint $volume.DriveLetter -ErrorAction Stop
-            $encryptionStatus[$volume.DriveLetter] = @{
-              label = $volume.Label
-              protected = $bitlockerStatus.ProtectionStatus -eq 'On'
-              method = 'BitLocker'
+                $drives = Get-WmiObject -Class Win32_LogicalDisk -Filter "DriveType = 3"
+                
+                foreach ($drive in $drives) {
+                    $driveStatus = @{
+                        label = if ($drive.VolumeName) { $drive.VolumeName } else { 'Unnamed' }
+                        deviceId = $drive.DeviceID
+                        protected = $false
+                        method = 'Unknown'
+                        details = ''
+                    }
+
+                    try {
+                        $fsutil = fsutil fsinfo encryptable $drive.DeviceID 2>&1
+                        if ($fsutil -match 'is encryptable: Yes') {
+                            $driveStatus.method = 'EFS'
+                            $driveStatus.protected = $true
+                        }
+                    } catch {
+                        $driveStatus.details = "Check failed: $($_.Exception.Message)"
+                    }
+
+                    $results.data[$drive.DeviceID] = $driveStatus
+                }
+
+                Write-Output (ConvertTo-Json -InputObject $results -Depth 10 -Compress)
+            } catch {
+                Write-Output (ConvertTo-Json -InputObject @{
+                    status = 'error'
+                    error = 'Encryption check failed'
+                    details = $_.Exception.Message
+                    timestamp = [DateTime]::UtcNow.ToString('o')
+                } -Compress)
             }
-          } catch {
-            $fsutil = & fsutil behavior query EncryptPagingFile 2>&1
-            $encryptionStatus[$volume.DriveLetter] = @{
-              label = $volume.Label
-              protected = $fsutil -match 'EncryptPagingFile = 1'
-              method = 'System'
+        `;
+
+        exec('powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "' + script + '"', 
+            { timeout: timeout, encoding: 'utf8' }, 
+            async (error, stdout, stderr) => {
+                if (timedOut) return;
+                clearTimeout(timeoutId);
+
+                console.log('Raw stdout:', stdout);
+
+                if (error) {
+                    const result = {
+                        status: STATUS.ERROR,
+                        error: 'Kon de encryptie status niet controleren',
+                        details: error.message,
+                        timestamp: new Date().toISOString()
+                    };
+                    await saveScanResult('encryption', result);
+                    resolve(result);
+                    return;
+                }
+
+                try {
+                    const cleanOutput = stdout.trim();
+                    if (!cleanOutput) {
+                        throw new Error('Empty response from PowerShell');
+                    }
+
+                    const result = JSON.parse(cleanOutput);
+                    await saveScanResult('encryption', result);
+                    resolve(result);
+                } catch (e) {
+                    const result = {
+                        status: STATUS.ERROR,
+                        error: 'Ongeldige encryptie status data',
+                        details: e.message,
+                        timestamp: new Date().toISOString()
+                    };
+                    await saveScanResult('encryption', result);
+                    resolve(result);
+                }
             }
-          }
-        }
-        ConvertTo-Json -InputObject @{
-          status = 'success'
-          data = $encryptionStatus
-          timestamp = [DateTime]::UtcNow.ToString('o')
-        } -Depth 10 -Compress
-      } catch {
-        ConvertTo-Json -InputObject @{
-          status = 'warning'
-          error = 'Limited encryption status check available'
-          details = "Run script as administrator for full encryption status"
-          timestamp = [DateTime]::UtcNow.ToString('o')
-        } -Compress
-      }
-    `
+        );
+    });
+});
+
+ipcMain.handle('check-network-security', async () => {
+    console.log('Starting network security check...');
+    return new Promise((resolve) => {
+        const timeout = SYSTEM_CHECK_TIMEOUT;
+        let timedOut = false;
+
+        const timeoutId = setTimeout(() => {
+            timedOut = true;
+            const result = {
+                status: STATUS.ERROR,
+                error: 'Netwerkbeveiliging controle duurde te lang',
+                details: `Controle afgebroken na ${timeout} milliseconden`,
+                timestamp: new Date().toISOString()
+            };
+            saveScanResult('network', result);
+            resolve(result);
+        }, timeout);
+
+        const script = `
+            try {
+                $ErrorActionPreference = 'Stop'
+                $results = @{
+                    status = 'success'
+                    data = @{
+                        networkAdapters = @()
+                        dnsServers = @()
+                        connections = @()
+                    }
+                    timestamp = [DateTime]::UtcNow.ToString('o')
+                }
+
+                # Get network adapters
+                Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | ForEach-Object {
+                    $adapter = @{
+                        name = $_.Name
+                        description = $_.InterfaceDescription
+                        status = $_.Status
+                        speed = $_.LinkSpeed
+                    }
+                    $results.data.networkAdapters += $adapter
+                }
+
+                # Get DNS servers
+                Get-DnsClientServerAddress | Where-Object { $_.AddressFamily -eq 2 } | ForEach-Object {
+                    $results.data.dnsServers += $_.ServerAddresses
+                }
+
+                # Get active connections
+                Get-NetTCPConnection -State Established | Select-Object -First 10 | ForEach-Object {
+                    $connection = @{
+                        localAddress = $_.LocalAddress
+                        localPort = $_.LocalPort
+                        remoteAddress = $_.RemoteAddress
+                        remotePort = $_.RemotePort
+                        state = $_.State
+                    }
+                    $results.data.connections += $connection
+                }
+
+                ConvertTo-Json -InputObject $results -Depth 10 -Compress
+            } catch {
+                ConvertTo-Json -InputObject @{
+                    status = 'error'
+                    error = 'Network check failed'
+                    details = $_.Exception.Message -replace '[^\w\s\-\.]', ''
+                    timestamp = [DateTime]::UtcNow.ToString('o')
+                } -Compress
+            }
+        `;
+
+        exec('powershell.exe -NoProfile -NonInteractive -Command "' + script + '"', 
+            { timeout: timeout, encoding: 'utf8' }, 
+            async (error, stdout, stderr) => {
+                if (timedOut) return;
+                clearTimeout(timeoutId);
+
+                if (error) {
+                    const result = {
+                        status: STATUS.ERROR,
+                        error: 'Kon de netwerkbeveiliging niet controleren',
+                        details: error.message,
+                        timestamp: new Date().toISOString()
+                    };
+                    await saveScanResult('network', result);
+                    resolve(result);
+                    return;
+                }
+
+                try {
+                    const result = JSON.parse(stdout.trim());
+                    await saveScanResult('network', result);
+                    resolve(result);
+                } catch (e) {
+                    const result = {
+                        status: STATUS.ERROR,
+                        error: 'Ongeldige netwerkbeveiliging data',
+                        details: e.message,
+                        timestamp: new Date().toISOString()
+                    };
+                    await saveScanResult('network', result);
+                    resolve(result);
+                }
+            }
+        );
+    });
+});
+
+module.exports = app;

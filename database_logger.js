@@ -1,73 +1,36 @@
 const fs = require('fs');
 const path = require('path');
 
-class DatabaseLogger {
-    constructor() {
-        this.logDir = 'logs';
-        this.logFile = path.join(this.logDir, 'database.log');
-        this.initializeLogDirectory();
-    }
-
-    initializeLogDirectory() {
-        if (!fs.existsSync(this.logDir)) {
-            fs.mkdirSync(this.logDir);
-        }
-    }
-
-    formatMessage(level, operation, details) {
+const dbLogger = {
+    info: (action, data) => {
         const timestamp = new Date().toISOString();
-        const formattedDetails = typeof details === 'object' ? JSON.stringify(details) : details;
-        return `[${timestamp}] [${level.toUpperCase()}] [${operation}] ${formattedDetails}\n`;
-    }
-
-    log(level, operation, details) {
-        const logMessage = this.formatMessage(level, operation, details);
-        fs.appendFileSync(this.logFile, logMessage);
-        console.log(logMessage.trim());
-    }
-
-    info(operation, details) {
-        this.log('info', operation, details);
-    }
-
-    error(operation, error) {
+        console.log(`[${timestamp}] [DB_INFO] [${action}]`, data);
+    },
+    error: (action, error) => {
+        const timestamp = new Date().toISOString();
         const errorDetails = {
             message: error.message,
-            stack: error.stack,
-            code: error.code
+            code: error.code || 'UNKNOWN',
+            stack: error.stack
         };
-        this.log('error', operation, errorDetails);
+        console.error(`[${timestamp}] [DB_ERROR] [${action}]`, errorDetails);
+        return errorDetails;
+    },
+    query: (action, data) => {
+        const timestamp = new Date().toISOString();
+        console.log(`[${timestamp}] [DB_QUERY] [${action}]`, data);
+    },
+    queryError: (action, data, error) => {
+        const timestamp = new Date().toISOString();
+        const errorDetails = {
+            message: error.message,
+            code: error.code || 'UNKNOWN',
+            stack: error.stack,
+            query: data
+        };
+        console.error(`[${timestamp}] [DB_QUERY_ERROR] [${action}]`, errorDetails);
+        return errorDetails;
     }
+};
 
-    warn(operation, details) {
-        this.log('warn', operation, details);
-    }
-
-    query(sql, params) {
-        this.info('QUERY', {
-            sql,
-            params: params || []
-        });
-    }
-
-    queryError(sql, params, error) {
-        this.error('QUERY_ERROR', {
-            sql,
-            params: params || [],
-            error: error.message
-        });
-    }
-
-    transaction(operation) {
-        this.info('TRANSACTION', operation);
-    }
-
-    transactionError(operation, error) {
-        this.error('TRANSACTION_ERROR', {
-            operation,
-            error: error.message
-        });
-    }
-}
-
-module.exports = new DatabaseLogger();
+module.exports = dbLogger;
